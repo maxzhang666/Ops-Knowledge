@@ -7,6 +7,7 @@ import InitWizard from "@/pages/init"
 import KnowledgePage from "@/pages/knowledge"
 import KBDetailPage from "@/pages/knowledge/detail"
 import AgentsPage from "@/pages/agents"
+import AgentDetailPage from "@/pages/agents/detail"
 import SettingsPage from "@/pages/settings"
 
 export const router = createBrowserRouter([
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
           { path: "knowledge", element: <KnowledgePage /> },
           { path: "knowledge/:id", element: <KBDetailPage /> },
           { path: "agents", element: <AgentsPage /> },
+          { path: "agents/:id", element: <AgentDetailPage /> },
           { path: "settings/*", element: <SettingsPage /> },
         ],
       },
