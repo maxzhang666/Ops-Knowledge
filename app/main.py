@@ -14,6 +14,8 @@ from app.knowledge.folder_router import router as folder_router
 from app.knowledge.retrieval_router import router as retrieval_router
 from app.knowledge.router import router as kb_router
 from app.model.router import router as model_router
+from app.system.init_router import router as init_router
+from app.system.notification_router import router as notification_router
 from app.system.router import router as system_router
 
 setup_logging()
@@ -33,6 +35,8 @@ app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(department_router, prefix=settings.API_V1_PREFIX)
 app.include_router(model_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_router, prefix=settings.API_V1_PREFIX)
+app.include_router(init_router, prefix=settings.API_V1_PREFIX)
+app.include_router(notification_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 app.include_router(folder_router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_router, prefix=settings.API_V1_PREFIX)
