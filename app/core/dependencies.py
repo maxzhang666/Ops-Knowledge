@@ -1,7 +1,9 @@
+import uuid
 from typing import Any
 
 from fastapi import Query
 from pydantic import BaseModel
+from sqlalchemy import Select
 
 
 class PaginationParams:
@@ -20,3 +22,20 @@ class PaginatedResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+def apply_dept_scope(
+    stmt: Select,
+    accessible_ids: list[uuid.UUID],
+    user_id: uuid.UUID,
+    id_column,
+    created_by_column,
+) -> Select:
+    """Filter query to show only resources the user created or has department access to."""
+    from sqlalchemy import or_
+    return stmt.where(
+        or_(
+            created_by_column == user_id,
+            id_column.in_(accessible_ids),
+        )
+    )
