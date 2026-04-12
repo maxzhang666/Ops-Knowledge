@@ -8,7 +8,13 @@ import KnowledgePage from "@/pages/knowledge"
 import KBDetailPage from "@/pages/knowledge/detail"
 import AgentsPage from "@/pages/agents"
 import AgentDetailPage from "@/pages/agents/detail"
-import SettingsPage from "@/pages/settings"
+import SettingsLayout from "@/pages/settings/layout"
+import ModelsPage from "@/pages/settings/models"
+import DepartmentsPage from "@/pages/settings/departments"
+import UsersPage from "@/pages/settings/users"
+import SystemPage from "@/pages/settings/system"
+import ProfilePage from "@/pages/settings/profile"
+import ApiKeysPage from "@/pages/settings/api-keys"
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -24,7 +30,19 @@ export const router = createBrowserRouter([
           { path: "knowledge/:id", element: <KBDetailPage /> },
           { path: "agents", element: <AgentsPage /> },
           { path: "agents/:id", element: <AgentDetailPage /> },
-          { path: "settings/*", element: <SettingsPage /> },
+          {
+            path: "settings",
+            element: <SettingsLayout />,
+            children: [
+              { index: true, element: <Navigate to="/settings/models" replace /> },
+              { path: "models", element: <ModelsPage /> },
+              { path: "departments", element: <DepartmentsPage /> },
+              { path: "users", element: <UsersPage /> },
+              { path: "system", element: <SystemPage /> },
+              { path: "profile", element: <ProfilePage /> },
+              { path: "api-keys", element: <ApiKeysPage /> },
+            ],
+          },
         ],
       },
     ],
