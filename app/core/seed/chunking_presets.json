@@ -1,0 +1,41 @@
+[
+  {
+    "name": "general",
+    "strategy": "recursive",
+    "params": {"chunk_size": 500, "chunk_overlap": 50},
+    "description": "General-purpose splitting with recursive character strategy"
+  },
+  {
+    "name": "qa",
+    "strategy": "qa",
+    "params": {"chunk_size": 800, "chunk_overlap": 0},
+    "description": "Optimized for Q&A pair documents"
+  },
+  {
+    "name": "book",
+    "strategy": "markdown",
+    "secondary": "sentence",
+    "params": {"chunk_size": 1000, "chunk_overlap": 100},
+    "description": "Book/long-form content with heading-aware splitting"
+  },
+  {
+    "name": "technical",
+    "strategy": "code",
+    "secondary": "recursive",
+    "params": {"chunk_size": 600, "chunk_overlap": 50},
+    "description": "Technical docs with code block preservation"
+  },
+  {
+    "name": "paper",
+    "strategy": "markdown",
+    "secondary": "recursive",
+    "params": {"chunk_size": 800, "chunk_overlap": 80},
+    "description": "Academic/research papers with section awareness"
+  },
+  {
+    "name": "custom",
+    "strategy": "recursive",
+    "params": {"chunk_size": 500, "chunk_overlap": 50},
+    "description": "Customizable preset with user-defined parameters"
+  }
+]
