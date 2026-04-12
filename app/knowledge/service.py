@@ -9,6 +9,7 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, Va
 from app.department.service import DepartmentService
 from app.knowledge.models import KBStatus, KnowledgeBase
 from app.knowledge.schemas import KBCreate, KBUpdate
+from app.system.models import SystemSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -93,11 +94,16 @@ class KBService:
         )
 
     async def check_kb_quota(self, user_id: uuid.UUID) -> None:
+        limit = MAX_KB_PER_USER
+        ss = await self.db.get(SystemSettings, 1)
+        if ss and ss.settings:
+            limit = ss.settings.get("quotas", {}).get("max_kbs_per_user", MAX_KB_PER_USER)
+
         count = (await self.db.execute(
             select(func.count()).where(
                 KnowledgeBase.created_by == user_id,
                 KnowledgeBase.status != KBStatus.DELETING,
             )
         )).scalar() or 0
-        if count >= MAX_KB_PER_USER:
-            raise ValidationError(f"Knowledge base quota exceeded (max {MAX_KB_PER_USER})")
+        if count >= limit:
+            raise ValidationError(f"Knowledge base quota exceeded (max {limit})")

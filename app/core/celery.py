@@ -18,5 +18,11 @@ celery_app.conf.update(
         "app.knowledge.embedding.tasks.*": {"queue": "embedding"},
     },
     task_default_queue="default",
+    beat_schedule={
+        "consistency-scan-hourly": {
+            "task": "app.system.tasks.consistency_scan",
+            "schedule": 3600.0,
+        },
+    },
 )
-celery_app.autodiscover_tasks(["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat"])
+celery_app.autodiscover_tasks(["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system"])

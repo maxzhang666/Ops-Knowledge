@@ -14,6 +14,7 @@ from app.knowledge.ingestion.parser import (
 )
 from app.knowledge.models import Document, DocumentStatus
 from app.knowledge.storage.minio_service import MinIOService
+from app.system.models import SystemSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -126,11 +127,16 @@ class DocumentService:
         )
 
     async def check_doc_quota(self, kb_id: uuid.UUID) -> None:
+        limit = MAX_DOCS_PER_KB
+        ss = await self.db.get(SystemSettings, 1)
+        if ss and ss.settings:
+            limit = ss.settings.get("quotas", {}).get("max_docs_per_kb", MAX_DOCS_PER_KB)
+
         count = (await self.db.execute(
             select(func.count()).where(
                 Document.knowledge_base_id == kb_id,
                 Document.is_archived.is_(False),
             )
         )).scalar() or 0
-        if count >= MAX_DOCS_PER_KB:
-            raise ValidationError(f"Document quota exceeded (max {MAX_DOCS_PER_KB} per knowledge base)")
+        if count >= limit:
+            raise ValidationError(f"Document quota exceeded (max {limit} per knowledge base)")
