@@ -5,6 +5,9 @@ import { LoadingSpinner } from "@/components/shared/loading-spinner"
 import { BreadcrumbNav } from "@/components/layout/breadcrumb-nav"
 import { FileTree } from "@/features/knowledge/components/file-tree"
 import { DocumentList } from "@/features/knowledge/components/document-list"
+import { ConfigTab } from "@/features/knowledge/components/config-tab"
+import { RetrievalTestTab } from "@/features/knowledge/components/retrieval-test-tab"
+import { QualityOverviewTab } from "@/features/knowledge/components/quality-overview-tab"
 import { knowledgeApi, type KnowledgeBase, type Folder } from "@/api/knowledge"
 import { useKnowledgeStore } from "@/stores/knowledge"
 
@@ -68,15 +71,15 @@ export default function KBDetailPage() {
         </TabsContent>
 
         <TabsContent value="config">
-          <div className="mt-4 text-sm text-muted-foreground">配置功能即将上线</div>
+          <ConfigTab kb={kb} onUpdated={load} />
         </TabsContent>
 
         <TabsContent value="retrieval">
-          <div className="mt-4 text-sm text-muted-foreground">检索测试即将上线</div>
+          <RetrievalTestTab kbId={kb.id} />
         </TabsContent>
 
         <TabsContent value="quality">
-          <div className="mt-4 text-sm text-muted-foreground">质量概览即将上线</div>
+          <QualityOverviewTab kb={kb} />
         </TabsContent>
       </Tabs>
     </div>
