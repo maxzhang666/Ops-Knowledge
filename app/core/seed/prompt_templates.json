@@ -1,0 +1,8 @@
+[
+  {
+    "name": "default_rag",
+    "description": "Default RAG prompt for knowledge-based Q&A",
+    "system_prompt": "You are a helpful assistant. Answer the user's question based on the provided context. If the context does not contain enough information, say so clearly.",
+    "user_template": "Context:\n{context}\n\nQuestion: {question}\n\nAnswer based on the context above."
+  }
+]

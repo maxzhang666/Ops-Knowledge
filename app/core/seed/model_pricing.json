@@ -1,0 +1,32 @@
+[
+  {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "input_cost_per_1k": 0.0025,
+    "output_cost_per_1k": 0.01
+  },
+  {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "input_cost_per_1k": 0.00015,
+    "output_cost_per_1k": 0.0006
+  },
+  {
+    "model": "text-embedding-3-small",
+    "provider": "openai",
+    "input_cost_per_1k": 0.00002,
+    "output_cost_per_1k": 0.0
+  },
+  {
+    "model": "claude-3-5-sonnet",
+    "provider": "anthropic",
+    "input_cost_per_1k": 0.003,
+    "output_cost_per_1k": 0.015
+  },
+  {
+    "model": "deepseek-chat",
+    "provider": "deepseek",
+    "input_cost_per_1k": 0.00014,
+    "output_cost_per_1k": 0.00028
+  }
+]

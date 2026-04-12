@@ -1,12 +1,19 @@
 import hashlib
+import json
 import secrets
 import uuid
+from pathlib import Path
 
-from sqlalchemy import select
+import structlog
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.system.models import ApiKey
+from app.system.models import ApiKey, Notification, SystemSettings
 from app.system.schemas import ApiKeyCreate
+
+logger = structlog.get_logger(__name__)
+
+SEED_DIR = Path(__file__).resolve().parent.parent / "core" / "seed"
 
 
 class ApiKeyService:
@@ -56,3 +63,102 @@ class ApiKeyService:
             raise ValueError("API key not found")
         api_key.is_active = False
         await self.db.flush()
+
+
+class InitService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def needs_init(self) -> bool:
+        from app.auth.models import User
+        count = (await self.db.execute(select(func.count()).select_from(User))).scalar() or 0
+        return count == 0
+
+    async def initialize(self, username: str, email: str, password: str):
+        from app.auth.models import User, UserRole
+        from app.auth.service import AuthService
+
+        if not await self.needs_init():
+            raise ValueError("System already initialized")
+
+        auth_svc = AuthService(self.db)
+        from app.auth.schemas import UserCreate
+        user = await auth_svc.register(UserCreate(username=username, email=email, password=password))
+        user.role = UserRole.SYSTEM_ADMIN
+        await self.db.flush()
+
+        await self._load_seed_data(user.id)
+
+        logger.info("system_initialized", admin=username)
+        return user
+
+    async def _load_seed_data(self, admin_id: uuid.UUID) -> None:
+        seed_data: dict = {}
+        for name in ("retrieval_presets", "prompt_templates", "model_pricing", "chunking_presets"):
+            path = SEED_DIR / f"{name}.json"
+            if path.exists():
+                seed_data[name] = json.loads(path.read_text(encoding="utf-8"))
+
+        ss = SystemSettings(id=1, settings=seed_data, updated_by=admin_id)
+        self.db.add(ss)
+        await self.db.flush()
+
+
+class NotificationService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def send(
+        self,
+        user_id: uuid.UUID,
+        type: str,
+        title: str,
+        content: str | None = None,
+        priority: str = "normal",
+        resource_type: str | None = None,
+        resource_id: uuid.UUID | None = None,
+    ) -> Notification:
+        notif = Notification(
+            user_id=user_id,
+            type=type,
+            title=title,
+            content=content,
+            priority=priority,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
+        self.db.add(notif)
+        await self.db.flush()
+        return notif
+
+    async def list_notifications(
+        self,
+        user_id: uuid.UUID,
+        is_read: bool | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> list[Notification]:
+        stmt = select(Notification).where(Notification.user_id == user_id)
+        if is_read is not None:
+            stmt = stmt.where(Notification.is_read == is_read)
+        stmt = stmt.order_by(Notification.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def unread_count(self, user_id: uuid.UUID) -> int:
+        stmt = select(func.count()).where(
+            Notification.user_id == user_id, Notification.is_read.is_(False)
+        )
+        return (await self.db.execute(stmt)).scalar() or 0
+
+    async def mark_read(self, notif_id: uuid.UUID) -> None:
+        await self.db.execute(
+            update(Notification).where(Notification.id == notif_id).values(is_read=True)
+        )
+
+    async def mark_all_read(self, user_id: uuid.UUID) -> None:
+        await self.db.execute(
+            update(Notification)
+            .where(Notification.user_id == user_id, Notification.is_read.is_(False))
+            .values(is_read=True)
+        )
