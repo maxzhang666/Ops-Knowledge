@@ -1,10 +1,22 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth.router import router as auth_router
 from app.core.config import settings
+from app.core.exceptions import register_exception_handlers
+from app.core.logging import setup_logging
+
+setup_logging()
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get(f"{settings.API_V1_PREFIX}/health")
-async def health_placeholder():
-    return {"status": "ok"}
+register_exception_handlers(app)
+app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
