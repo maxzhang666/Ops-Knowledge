@@ -12,6 +12,7 @@ from app.department.models import Department, UserDepartment, DepartmentResource
 from app.system.models import ApiKey  # noqa: F401
 from app.model.models import ModelProvider  # noqa: F401
 from app.knowledge.models import KnowledgeBase, Folder, Document, Chunk  # noqa: F401
+from app.agent.models import Agent  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

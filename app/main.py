@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent.router import router as agent_router
 from app.auth.router import router as auth_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
@@ -36,3 +37,4 @@ app.include_router(folder_router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_router, prefix=settings.API_V1_PREFIX)
 app.include_router(chunk_router, prefix=settings.API_V1_PREFIX)
 app.include_router(retrieval_router, prefix=settings.API_V1_PREFIX)
+app.include_router(agent_router, prefix=settings.API_V1_PREFIX)
