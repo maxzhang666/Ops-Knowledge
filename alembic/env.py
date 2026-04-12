@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.models import Base
 from app.auth.models import User  # noqa: F401
 from app.department.models import Department, UserDepartment, DepartmentResource  # noqa: F401
-from app.system.models import ApiKey  # noqa: F401
+from app.system.models import ApiKey, Notification, SystemSettings  # noqa: F401
 from app.model.models import ModelProvider  # noqa: F401
 from app.knowledge.models import KnowledgeBase, Folder, Document, Chunk  # noqa: F401
 from app.agent.models import Agent  # noqa: F401
