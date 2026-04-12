@@ -19,4 +19,4 @@ celery_app.conf.update(
     },
     task_default_queue="default",
 )
-celery_app.autodiscover_tasks(["app.knowledge.ingestion", "app.knowledge.embedding"])
+celery_app.autodiscover_tasks(["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat"])
