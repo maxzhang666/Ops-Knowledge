@@ -1,4 +1,4 @@
-import { MessageSquare, Bell, Sun, Moon, Monitor, LogOut, User } from "lucide-react"
+import { Bell, Sun, Moon, Monitor, LogOut, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useTheme } from "@/hooks/use-theme"
 import { useAuthStore } from "@/stores/auth"
+import { QuickChatDropdown } from "@/features/chat/components/quick-chat-dropdown"
 
 const themeIcon = { light: Sun, dark: Moon, system: Monitor } as const
 
@@ -21,9 +22,7 @@ export function Header() {
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-end gap-2 border-b bg-background px-4">
-      <Button variant="ghost" size="icon" title="对话">
-        <MessageSquare className="h-4 w-4" />
-      </Button>
+      <QuickChatDropdown />
       <Button variant="ghost" size="icon" title="通知">
         <Bell className="h-4 w-4" />
       </Button>
