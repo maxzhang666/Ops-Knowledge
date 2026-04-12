@@ -5,6 +5,7 @@ import LoginPage from "@/pages/login"
 import NotFoundPage from "@/pages/not-found"
 import InitWizard from "@/pages/init"
 import KnowledgePage from "@/pages/knowledge"
+import KBDetailPage from "@/pages/knowledge/detail"
 import AgentsPage from "@/pages/agents"
 import SettingsPage from "@/pages/settings"
 
@@ -19,6 +20,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/knowledge" replace /> },
           { path: "knowledge", element: <KnowledgePage /> },
+          { path: "knowledge/:id", element: <KBDetailPage /> },
           { path: "agents", element: <AgentsPage /> },
           { path: "settings/*", element: <SettingsPage /> },
         ],
