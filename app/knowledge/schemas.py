@@ -43,6 +43,27 @@ class KBResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Chunk ───────────────────────────────────────────────────────
+
+class ChunkResponse(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    knowledge_base_id: uuid.UUID
+    folder_id: uuid.UUID | None
+    content: str
+    parent_chunk_id: uuid.UUID | None
+    level: int
+    position: int
+    token_count: int
+    quality_score: float | None
+    vector_id: str | None
+    is_manually_edited: bool
+    metadata: dict | None = Field(None, alias="metadata_")
+    created_at: datetime
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
 # ── Folder ───────────────────────────────────────────────────────
 
 class FolderCreate(BaseModel):

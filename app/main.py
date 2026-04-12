@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import setup_logging
 from app.department.router import router as department_router
+from app.knowledge.chunk_router import router as chunk_router
 from app.knowledge.document_router import router as document_router
 from app.knowledge.folder_router import router as folder_router
 from app.knowledge.router import router as kb_router
@@ -32,3 +33,4 @@ app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 app.include_router(folder_router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_router, prefix=settings.API_V1_PREFIX)
+app.include_router(chunk_router, prefix=settings.API_V1_PREFIX)

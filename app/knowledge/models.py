@@ -6,8 +6,10 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
+    SmallInteger,
     String,
     Text,
     func,
@@ -117,3 +119,40 @@ class Document(Base, UUIDMixin, TimestampMixin):
 
     knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase", back_populates="documents")
     folder: Mapped["Folder | None"] = relationship("Folder", back_populates="documents")
+    chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
+
+
+class Chunk(Base):
+    __tablename__ = "chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chunks.id", ondelete="SET NULL"), nullable=True
+    )
+    level: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vector_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_manually_edited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    edit_history: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    document: Mapped["Document"] = relationship("Document", back_populates="chunks")
+    knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase")
+    parent_chunk: Mapped["Chunk | None"] = relationship("Chunk", remote_side="Chunk.id")
