@@ -32,14 +32,14 @@ export function Header() {
       </Button>
 
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="rounded-full">
-            <Avatar className="h-7 w-7">
-              <AvatarFallback className="text-xs">
-                {user?.username?.charAt(0).toUpperCase() ?? "U"}
-              </AvatarFallback>
-            </Avatar>
-          </Button>
+        <DropdownMenuTrigger
+          render={<Button variant="ghost" size="icon" className="rounded-full" />}
+        >
+          <Avatar className="h-7 w-7">
+            <AvatarFallback className="text-xs">
+              {user?.username?.charAt(0).toUpperCase() ?? "U"}
+            </AvatarFallback>
+          </Avatar>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem disabled>

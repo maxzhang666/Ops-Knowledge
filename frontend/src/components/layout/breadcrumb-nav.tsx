@@ -36,8 +36,8 @@ export function BreadcrumbNav() {
                 {isLast ? (
                   <BreadcrumbPage>{label}</BreadcrumbPage>
                 ) : (
-                  <BreadcrumbLink asChild>
-                    <Link to={path}>{label}</Link>
+                  <BreadcrumbLink render={<Link to={path} />}>
+                    {label}
                   </BreadcrumbLink>
                 )}
               </BreadcrumbItem>
