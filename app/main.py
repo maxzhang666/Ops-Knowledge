@@ -9,6 +9,7 @@ from app.department.router import router as department_router
 from app.knowledge.chunk_router import router as chunk_router
 from app.knowledge.document_router import router as document_router
 from app.knowledge.folder_router import router as folder_router
+from app.knowledge.retrieval_router import router as retrieval_router
 from app.knowledge.router import router as kb_router
 from app.model.router import router as model_router
 from app.system.router import router as system_router
@@ -34,3 +35,4 @@ app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 app.include_router(folder_router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_router, prefix=settings.API_V1_PREFIX)
 app.include_router(chunk_router, prefix=settings.API_V1_PREFIX)
+app.include_router(retrieval_router, prefix=settings.API_V1_PREFIX)
