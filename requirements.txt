@@ -35,9 +35,11 @@ celery[redis]==5.5.2
 # LLM Gateway
 litellm>=1.63.0,!=1.82.7,!=1.82.8
 
-# Document parsing (install with --no-deps, then manually install real deps without magika)
-# magika pulls onnxruntime which has no wheel for Amazon Linux 2
-# markitdown works fine without magika — it just loses auto file-type detection (we do our own)
+# numpy<2 must be declared BEFORE any package that transitively depends on numpy
+# to prevent pip from pulling numpy 2.x which requires GCC >= 9.3 to build from source
+numpy<2
+
+# Document parsing (markitdown installed with --no-deps in setup.sh to skip magika/onnxruntime)
 markitdown==0.1.5
 
 # Logging

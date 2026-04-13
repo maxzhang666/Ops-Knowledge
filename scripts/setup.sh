@@ -24,16 +24,18 @@ fi
 source .venv/bin/activate
 echo "Python: $(python3 --version)"
 
-# 2. deps (markitdown installed separately to skip magika/onnxruntime)
+# 2. deps
 echo "Installing dependencies..."
 pip install --upgrade pip -q
 
-# Install markitdown without its deps first, then install the rest
+# Step A: pin numpy<2 first (prebuilt wheel, avoids GCC>=9.3 build)
+pip install "numpy<2" -q
+
+# Step B: install markitdown without deps (skip magika → onnxruntime chain)
 pip install markitdown==0.1.5 --no-deps -q
 
-# Install all other deps (markitdown line will be skipped since already installed)
-pip install -r requirements.txt --ignore-installed markitdown -q 2>/dev/null || \
-    pip install -r requirements.txt -q
+# Step C: install everything else (numpy already pinned, markitdown already in place)
+pip install -r requirements.txt -q
 
 echo "Done"
 
