@@ -9,6 +9,7 @@ cd "$PROJECT_DIR"
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
 source .venv/bin/activate
+export PYTHONPATH="$PROJECT_DIR:${PYTHONPATH:-}"
 
 # Run migrations before start
 echo "Running migrations..."

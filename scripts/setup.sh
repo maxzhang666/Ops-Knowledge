@@ -2,14 +2,15 @@
 set -euo pipefail
 
 # =============================================================================
-# Ops-Knowledge Setup — Python venv + dependencies
-# Prerequisites: Python 3.11+, GCC >= 10, Rust (for tiktoken)
+# Ops-Knowledge Setup — venv + deps + migrate + init admin
+# Prerequisites: Python 3.11+, GCC >= 10, Rust
 # Usage: ./scripts/setup.sh
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
+export PYTHONPATH="$PROJECT_DIR:${PYTHONPATH:-}"
 
 echo "=== Ops-Knowledge Setup ==="
 
@@ -48,13 +49,9 @@ echo "Python: $(python3 --version)"
 echo ""
 echo "Installing dependencies..."
 pip install --upgrade pip -q
-
-# Main deps (markitdown excluded from requirements.txt)
 pip install -r requirements.txt
 
-# markitdown: install --no-deps to skip magika→onnxruntime (no wheel for Amazon Linux 2)
-# then install ALL its real runtime deps manually
-# Source: markitdown 0.1.5 METADATA Requires-Dist (minus magika)
+# markitdown: --no-deps to skip magika→onnxruntime, then install real deps
 pip install markitdown==0.1.5 --no-deps
 pip install \
     beautifulsoup4 \
@@ -62,13 +59,12 @@ pip install \
     defusedxml \
     markdownify \
     requests \
-    pdfminer.six">=20251230" \
+    "pdfminer.six>=20251230" \
     "pdfplumber>=0.11.9" \
     lxml \
     "mammoth~=1.11.0" \
     python-pptx \
     openpyxl
-
 echo "Done"
 
 # 3. .env
@@ -78,11 +74,59 @@ if [ ! -f ".env" ]; then
     echo "Created .env from .env.example — edit it to match your server"
 fi
 
-# 4. verify markitdown import
+# 4. migrate
 echo ""
-echo "Verifying markitdown..."
-python3 -c "from app.knowledge.ingestion.parser import parse_document; print('  markitdown OK')" 2>&1 || echo "  WARNING: markitdown import failed"
+echo "Running migrations..."
+alembic upgrade head
+
+# 5. init admin (if first time)
+echo ""
+NEEDS_INIT=$(python3 -c "
+import asyncio
+from app.core.config import settings
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
+
+async def check():
+    engine = create_async_engine(settings.DATABASE_URL)
+    async with engine.connect() as conn:
+        result = await conn.execute(text('SELECT COUNT(*) FROM users'))
+        count = result.scalar()
+    await engine.dispose()
+    return count == 0
+
+print(asyncio.run(check()))
+" 2>/dev/null || echo "False")
+
+if [ "$NEEDS_INIT" = "True" ]; then
+    echo "=== Create Admin Account ==="
+    read -p "  Username: " ADMIN_USER
+    read -p "  Email: " ADMIN_EMAIL
+    read -s -p "  Password: " ADMIN_PASS
+    echo ""
+
+    python3 -c "
+import asyncio, sys
+from app.system.service import InitService
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from app.core.config import settings
+
+async def init():
+    engine = create_async_engine(settings.DATABASE_URL)
+    session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session() as db:
+        svc = InitService(db)
+        user = await svc.initialize('$ADMIN_USER', '$ADMIN_EMAIL', '$ADMIN_PASS')
+        await db.commit()
+        print(f'  Admin created: {user.username} ({user.role.value})')
+    await engine.dispose()
+
+asyncio.run(init())
+" || echo "  ERROR: Failed to create admin"
+else
+    echo "Admin account already exists, skipping init"
+fi
 
 echo ""
 echo "=== Setup Complete ==="
-echo "Next: edit .env → bash scripts/start.sh api"
+echo "Start: bash scripts/start.sh api"
