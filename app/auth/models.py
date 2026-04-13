@@ -19,7 +19,8 @@ class User(Base, UUIDMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, name="user_role"), default=UserRole.USER, nullable=False
+        Enum(UserRole, name="user_role", values_callable=lambda e: [x.value for x in e]),
+        default=UserRole.USER, nullable=False
     )
     auth_provider: Mapped[str] = mapped_column(String(20), default="local", nullable=False)
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

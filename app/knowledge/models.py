@@ -48,7 +48,7 @@ class KnowledgeBase(Base, UUIDMixin, TimestampMixin):
     document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[KBStatus] = mapped_column(
-        Enum(KBStatus, name="kb_status"), default=KBStatus.ACTIVE, nullable=False
+        Enum(KBStatus, name="kb_status", values_callable=lambda e: [x.value for x in e]), default=KBStatus.ACTIVE, nullable=False
     )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
@@ -102,7 +102,7 @@ class Document(Base, UUIDMixin, TimestampMixin):
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status: Mapped[DocumentStatus] = mapped_column(
-        Enum(DocumentStatus, name="document_status"), default=DocumentStatus.PENDING, nullable=False
+        Enum(DocumentStatus, name="document_status", values_callable=lambda e: [x.value for x in e]), default=DocumentStatus.PENDING, nullable=False
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     processing_progress: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -55,7 +55,8 @@ class UserDepartment(Base, UUIDMixin):
         UUID(as_uuid=True), ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[DepartmentRole] = mapped_column(
-        Enum(DepartmentRole, name="department_role"), nullable=False
+        Enum(DepartmentRole, name="department_role", values_callable=lambda e: [x.value for x in e]),
+        nullable=False
     )
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
