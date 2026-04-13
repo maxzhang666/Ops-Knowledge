@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,13 @@ from app.auth.models import User
 from app.auth.schemas import UserCreate
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__truncate_error=False)
+
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
 class AuthService:
@@ -19,7 +25,7 @@ class AuthService:
         self.db = db
 
     async def register(self, data: UserCreate) -> User:
-        hashed = pwd_context.hash(data.password)
+        hashed = _hash_password(data.password)
         user = User(username=data.username, email=data.email, hashed_password=hashed)
         self.db.add(user)
         try:
@@ -33,7 +39,7 @@ class AuthService:
         stmt = select(User).where(User.username == username, User.is_active.is_(True))
         result = await self.db.execute(stmt)
         user = result.scalar_one_or_none()
-        if user is None or not pwd_context.verify(password, user.hashed_password):
+        if user is None or not _verify_password(password, user.hashed_password):
             return None
         return user
 
