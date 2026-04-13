@@ -17,7 +17,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE TYPE department_role AS ENUM ('dept_admin', 'editor', 'viewer')")
+    op.execute("DO $$ BEGIN CREATE TYPE department_role AS ENUM ('dept_admin', 'editor', 'viewer'); EXCEPTION WHEN duplicate_object THEN NULL; END $$")
 
     op.create_table('departments',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
