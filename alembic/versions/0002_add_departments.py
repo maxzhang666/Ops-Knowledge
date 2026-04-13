@@ -17,8 +17,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("DO $$ BEGIN CREATE TYPE department_role AS ENUM ('dept_admin', 'editor', 'viewer'); EXCEPTION WHEN duplicate_object THEN NULL; END $$")
-
+    op.execute("DROP TYPE IF EXISTS department_role")
     op.create_table('departments',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('name', sa.String(length=100), nullable=False),
@@ -68,4 +67,4 @@ def downgrade() -> None:
     op.drop_table('user_departments')
     op.drop_index('ix_departments_parent_department_id', table_name='departments')
     op.drop_table('departments')
-    op.execute("DROP TYPE department_role")
+    op.execute("DROP TYPE IF EXISTS department_role")

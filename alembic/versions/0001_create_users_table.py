@@ -17,7 +17,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("DO $$ BEGIN CREATE TYPE user_role AS ENUM ('system_admin', 'user'); EXCEPTION WHEN duplicate_object THEN NULL; END $$")
+    # Drop leftover enum from any previous failed run
+    op.execute("DROP TYPE IF EXISTS user_role")
     op.create_table('users',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('username', sa.String(length=50), nullable=False),
@@ -40,4 +41,4 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_index(op.f('ix_users_username'), table_name='users')
     op.drop_table('users')
-    op.execute("DROP TYPE user_role")
+    op.execute("DROP TYPE IF EXISTS user_role")
