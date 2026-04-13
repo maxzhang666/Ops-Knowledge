@@ -4,7 +4,9 @@ set -euo pipefail
 # =============================================================================
 # Ops-Knowledge Setup — venv + deps + migrate + init admin
 # Prerequisites: Python 3.11+, GCC >= 10, Rust
-# Usage: ./scripts/setup.sh
+# Usage:
+#   ./scripts/setup.sh                                      # setup only
+#   ./scripts/setup.sh --init admin admin@x.com Pass123!    # setup + create admin
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,7 +30,6 @@ echo "  GCC: $GCC_VER"
 
 if ! command -v rustc &>/dev/null; then
     echo "ERROR: Rust compiler not found (required by tiktoken)"
-    echo "Fix:   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
     exit 1
 fi
 echo "  Rust: $(rustc --version)"
@@ -50,28 +51,18 @@ echo ""
 echo "Installing dependencies..."
 pip install --upgrade pip -q
 pip install -r requirements.txt
-
-# markitdown: --no-deps to skip magika→onnxruntime, then install real deps
 pip install markitdown==0.1.5 --no-deps
 pip install \
-    beautifulsoup4 \
-    charset-normalizer \
-    defusedxml \
-    markdownify \
-    requests \
-    "pdfminer.six>=20251230" \
-    "pdfplumber>=0.11.9" \
-    lxml \
-    "mammoth~=1.11.0" \
-    python-pptx \
-    openpyxl
+    beautifulsoup4 charset-normalizer defusedxml markdownify requests \
+    "pdfminer.six>=20251230" "pdfplumber>=0.11.9" lxml "mammoth~=1.11.0" \
+    python-pptx openpyxl -q
 echo "Done"
 
 # 3. .env
 echo ""
 if [ ! -f ".env" ]; then
     cp .env.example .env
-    echo "Created .env from .env.example — edit it to match your server"
+    echo "Created .env from .env.example — edit it before running"
 fi
 
 # 4. migrate
@@ -79,34 +70,14 @@ echo ""
 echo "Running migrations..."
 alembic upgrade head
 
-# 5. init admin (if first time)
-echo ""
-NEEDS_INIT=$(python3 -c "
-import asyncio
-from app.core.config import settings
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-
-async def check():
-    engine = create_async_engine(settings.DATABASE_URL)
-    async with engine.connect() as conn:
-        result = await conn.execute(text('SELECT COUNT(*) FROM users'))
-        count = result.scalar()
-    await engine.dispose()
-    return count == 0
-
-print(asyncio.run(check()))
-" 2>/dev/null || echo "False")
-
-if [ "$NEEDS_INIT" = "True" ]; then
-    echo "=== Create Admin Account ==="
-    read -p "  Username: " ADMIN_USER
-    read -p "  Email: " ADMIN_EMAIL
-    read -s -p "  Password: " ADMIN_PASS
-    echo ""
+# 5. init admin (if --init flag provided)
+if [ "${1:-}" = "--init" ]; then
+    ADMIN_USER="${2:?Usage: $0 --init <username> <email> <password>}"
+    ADMIN_EMAIL="${3:?Usage: $0 --init <username> <email> <password>}"
+    ADMIN_PASS="${4:?Usage: $0 --init <username> <email> <password>}"
 
     python3 -c "
-import asyncio, sys
+import asyncio
 from app.system.service import InitService
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from app.core.config import settings
@@ -118,13 +89,11 @@ async def init():
         svc = InitService(db)
         user = await svc.initialize('$ADMIN_USER', '$ADMIN_EMAIL', '$ADMIN_PASS')
         await db.commit()
-        print(f'  Admin created: {user.username} ({user.role.value})')
+        print(f'Admin created: {user.username} ({user.role.value})')
     await engine.dispose()
 
 asyncio.run(init())
-" || echo "  ERROR: Failed to create admin"
-else
-    echo "Admin account already exists, skipping init"
+"
 fi
 
 echo ""
