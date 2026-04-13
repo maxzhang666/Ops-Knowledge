@@ -39,8 +39,8 @@ litellm>=1.63.0,!=1.82.7,!=1.82.8
 # to prevent pip from pulling numpy 2.x which requires GCC >= 9.3 to build from source
 numpy<2
 
-# Document parsing (markitdown installed with --no-deps in setup.sh to skip magika/onnxruntime)
-markitdown==0.1.5
+# Document parsing: markitdown==0.1.5 installed via --no-deps in setup.sh (skip magika/onnxruntime)
+# Do NOT add markitdown here — it triggers unresolvable magika→onnxruntime dependency
 
 # Logging
 structlog>=25.1.0
