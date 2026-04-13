@@ -81,7 +81,7 @@ fi
 # 4. verify markitdown import
 echo ""
 echo "Verifying markitdown..."
-python3 -c "from markitdown import MarkItDown; print('  markitdown OK')" 2>&1 || echo "  WARNING: markitdown import failed"
+python3 -c "from app.knowledge.ingestion.parser import parse_document; print('  markitdown OK')" 2>&1 || echo "  WARNING: markitdown import failed"
 
 echo ""
 echo "=== Setup Complete ==="
