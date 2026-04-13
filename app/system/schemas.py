@@ -30,7 +30,7 @@ class ApiKeyCreated(ApiKeyResponse):
 class InitRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: str
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=8, max_length=72)
 
 
 class NotificationResponse(BaseModel):

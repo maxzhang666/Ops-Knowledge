@@ -11,7 +11,7 @@ from app.auth.models import User
 from app.auth.schemas import UserCreate
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__truncate_error=False)
 
 
 class AuthService:
