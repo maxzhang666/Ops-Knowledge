@@ -52,8 +52,9 @@ echo "Installing dependencies..."
 pip install --upgrade pip -q
 pip install -r requirements.txt
 # markitdown separately: skip magika→onnxruntime (no wheel for Amazon Linux 2)
-# our parser.py does its own file-type detection, magika not needed
+# install markitdown --no-deps, then manually install its actual runtime deps
 pip install markitdown==0.1.5 --no-deps
+pip install beautifulsoup4 charset-normalizer puremagic pdfminer.six python-pptx openpyxl docling-core -q
 echo "Done"
 
 # 3. .env
