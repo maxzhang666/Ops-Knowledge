@@ -36,7 +36,7 @@ celery[redis]==5.5.2
 litellm>=1.63.0,!=1.82.7,!=1.82.8
 
 # Document parsing
-markitdown[all]==0.1.5
+markitdown==0.1.5
 
 # Logging
 structlog>=25.1.0
