@@ -17,12 +17,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # -- enums --
-    kb_status = postgresql.ENUM('active', 'indexing', 'error', 'deleting', name='kb_status', create_type=False)
-    kb_status.create(op.get_bind(), checkfirst=True)
-
-    doc_status = postgresql.ENUM('pending', 'processing', 'completed', 'error', name='document_status', create_type=False)
-    doc_status.create(op.get_bind(), checkfirst=True)
+    # Clean up leftover enums from any previous failed run
+    op.execute("DROP TYPE IF EXISTS kb_status")
+    op.execute("DROP TYPE IF EXISTS document_status")
 
     # -- knowledge_bases --
     op.create_table('knowledge_bases',
