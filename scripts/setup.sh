@@ -51,6 +51,9 @@ echo ""
 echo "Installing dependencies..."
 pip install --upgrade pip -q
 pip install -r requirements.txt
+# markitdown separately: skip magika→onnxruntime (no wheel for Amazon Linux 2)
+# our parser.py does its own file-type detection, magika not needed
+pip install markitdown==0.1.5 --no-deps
 echo "Done"
 
 # 3. .env

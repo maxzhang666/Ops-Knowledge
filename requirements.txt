@@ -35,8 +35,8 @@ celery[redis]==5.5.2
 # LLM Gateway
 litellm>=1.63.0,!=1.82.7,!=1.82.8
 
-# Document parsing
-markitdown==0.1.5
+# Document parsing: markitdown installed separately in setup.sh (--no-deps to skip magika/onnxruntime)
+# markitdown==0.1.5
 
 # Logging
 structlog>=25.1.0
