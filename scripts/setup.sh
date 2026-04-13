@@ -24,10 +24,17 @@ fi
 source .venv/bin/activate
 echo "Python: $(python3 --version)"
 
-# 2. deps
+# 2. deps (markitdown installed separately to skip magika/onnxruntime)
 echo "Installing dependencies..."
 pip install --upgrade pip -q
-pip install -r requirements.txt
+
+# Install markitdown without its deps first, then install the rest
+pip install markitdown==0.1.5 --no-deps -q
+
+# Install all other deps (markitdown line will be skipped since already installed)
+pip install -r requirements.txt --ignore-installed markitdown -q 2>/dev/null || \
+    pip install -r requirements.txt -q
+
 echo "Done"
 
 # 3. .env
