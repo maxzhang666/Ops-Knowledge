@@ -33,7 +33,7 @@ httpx==0.28.1
 celery[redis]==5.5.2
 
 # LLM Gateway
-litellm>=1.83.0
+litellm>=1.63.0,!=1.82.7,!=1.82.8
 
 # Document parsing
 markitdown[all]==0.1.5
