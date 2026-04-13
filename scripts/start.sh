@@ -11,7 +11,8 @@ cd "$PROJECT_DIR"
 source .venv/bin/activate
 
 # Run migrations before start
-alembic upgrade head 2>/dev/null || true
+echo "Running migrations..."
+alembic upgrade head
 
 COMPONENT="${1:?Usage: $0 [api|worker|beat]}"
 
