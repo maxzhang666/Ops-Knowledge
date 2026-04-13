@@ -2,8 +2,17 @@ import hashlib
 import io
 import os
 import re
+import sys
 
 import structlog
+
+# Stub magika before markitdown tries to import it (magika/onnxruntime unavailable on some platforms)
+if "magika" not in sys.modules:
+    import types
+    _magika = types.ModuleType("magika")
+    _magika.Magika = None  # type: ignore
+    sys.modules["magika"] = _magika
+
 from markitdown import MarkItDown
 
 logger = structlog.get_logger(__name__)
