@@ -21,7 +21,6 @@ GCC_VER=$(gcc -dumpversion 2>/dev/null || echo "0")
 GCC_MAJOR=$(echo "$GCC_VER" | cut -d. -f1)
 if [ "$GCC_MAJOR" -lt 10 ]; then
     echo "ERROR: GCC >= 10 required (found: $GCC_VER)"
-    echo "Fix:   sudo yum install -y gcc10 gcc10-c++  (or see scripts/install-compilers.sh)"
     exit 1
 fi
 echo "  GCC: $GCC_VER"
@@ -32,7 +31,6 @@ if ! command -v rustc &>/dev/null; then
     exit 1
 fi
 echo "  Rust: $(rustc --version)"
-echo "  OK"
 
 # 1. venv
 echo ""
@@ -50,11 +48,27 @@ echo "Python: $(python3 --version)"
 echo ""
 echo "Installing dependencies..."
 pip install --upgrade pip -q
+
+# Main deps (markitdown excluded from requirements.txt)
 pip install -r requirements.txt
-# markitdown separately: skip magika→onnxruntime (no wheel for Amazon Linux 2)
-# install markitdown --no-deps, then manually install its actual runtime deps
+
+# markitdown: install --no-deps to skip magika→onnxruntime (no wheel for Amazon Linux 2)
+# then install ALL its real runtime deps manually
+# Source: markitdown 0.1.5 METADATA Requires-Dist (minus magika)
 pip install markitdown==0.1.5 --no-deps
-pip install beautifulsoup4 charset-normalizer puremagic pdfminer.six python-pptx openpyxl docling-core -q
+pip install \
+    beautifulsoup4 \
+    charset-normalizer \
+    defusedxml \
+    markdownify \
+    requests \
+    pdfminer.six">=20251230" \
+    "pdfplumber>=0.11.9" \
+    lxml \
+    "mammoth~=1.11.0" \
+    python-pptx \
+    openpyxl
+
 echo "Done"
 
 # 3. .env
@@ -64,6 +78,11 @@ if [ ! -f ".env" ]; then
     echo "Created .env from .env.example — edit it to match your server"
 fi
 
+# 4. verify markitdown import
+echo ""
+echo "Verifying markitdown..."
+python3 -c "from markitdown import MarkItDown; print('  markitdown OK')" 2>&1 || echo "  WARNING: markitdown import failed"
+
 echo ""
 echo "=== Setup Complete ==="
-echo "Next: edit .env → alembic upgrade head → ./scripts/test.sh unit"
+echo "Next: edit .env → bash scripts/start.sh api"
