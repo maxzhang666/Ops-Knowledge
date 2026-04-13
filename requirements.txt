@@ -35,12 +35,8 @@ celery[redis]==5.5.2
 # LLM Gateway
 litellm>=1.63.0,!=1.82.7,!=1.82.8
 
-# numpy<2 must be declared BEFORE any package that transitively depends on numpy
-# to prevent pip from pulling numpy 2.x which requires GCC >= 9.3 to build from source
-numpy<2
-
-# Document parsing: markitdown==0.1.5 installed via --no-deps in setup.sh (skip magika/onnxruntime)
-# Do NOT add markitdown here — it triggers unresolvable magika→onnxruntime dependency
+# Document parsing
+markitdown==0.1.5
 
 # Logging
 structlog>=25.1.0
