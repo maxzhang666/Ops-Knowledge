@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,33 +13,35 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
+  const [errorMsg, setErrorMsg] = useState("")
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault()
-    setMessage(null)
+    setErrorMsg("")
 
     if (newPassword !== confirmPassword) {
-      setMessage({ type: "err", text: "两次输入的密码不一致" })
+      setErrorMsg("两次输入的密码不一致")
       return
     }
     if (newPassword.length < 8) {
-      setMessage({ type: "err", text: "密码长度至少 8 位" })
+      setErrorMsg("密码长度至少 8 位")
       return
     }
 
     setLoading(true)
     try {
       await api.post("/auth/change-password", {
-        old_password: oldPassword,
+        current_password: oldPassword,
         new_password: newPassword,
       })
-      setMessage({ type: "ok", text: "密码修改成功" })
+      toast.success("密码修改成功")
       setOldPassword("")
       setNewPassword("")
       setConfirmPassword("")
     } catch (err) {
-      setMessage({ type: "err", text: err instanceof Error ? err.message : "修改失败" })
+      const msg = err instanceof Error ? err.message : "修改失败"
+      setErrorMsg(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
@@ -97,10 +100,8 @@ export default function ProfilePage() {
             required
           />
         </div>
-        {message && (
-          <p className={`text-sm ${message.type === "ok" ? "text-green-600" : "text-red-600"}`}>
-            {message.text}
-          </p>
+        {errorMsg && (
+          <p className="text-sm text-red-600">{errorMsg}</p>
         )}
         <div>
           <Button type="submit" disabled={loading}>

@@ -9,7 +9,14 @@ class RecursiveCharacterStrategy(ChunkingStrategy):
             return []
         chunk_size = config.get("chunk_size", 500)
         overlap = config.get("chunk_overlap", 50)
-        pieces = self._split_recursive(text, chunk_size, self.SEPARATORS)
+        # Support custom delimiter: prepend to default separators
+        separators = list(self.SEPARATORS)
+        custom_delim = config.get("delimiter")
+        if custom_delim:
+            delim = custom_delim.replace("\\n", "\n").replace("\\t", "\t")
+            if delim not in separators:
+                separators.insert(0, delim)
+        pieces = self._split_recursive(text, chunk_size, separators)
         pieces = self._apply_overlap(pieces, overlap)
         return [
             ChunkResult(content=p, level=0, position=i)

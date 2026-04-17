@@ -73,7 +73,7 @@ async def get_department(
     return dept
 
 
-@router.put("/{dept_id}", response_model=DepartmentResponse)
+@router.post("/{dept_id}/update", response_model=DepartmentResponse)
 async def update_department(
     dept_id: uuid.UUID,
     data: DepartmentUpdate,
@@ -86,7 +86,7 @@ async def update_department(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{dept_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_department(
     dept_id: uuid.UUID,
     _user: User = require_role(UserRole.SYSTEM_ADMIN),
@@ -106,6 +106,7 @@ async def list_members(
     _user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
+    await _require_dept_admin(dept_id, _user, db)
     members = await _svc(db).list_members(dept_id)
     return [
         MemberResponse(
@@ -143,7 +144,7 @@ async def add_member(
     )
 
 
-@router.put("/{dept_id}/members/{user_id}", response_model=MemberResponse)
+@router.post("/{dept_id}/members/{user_id}/update", response_model=MemberResponse)
 async def update_member_role(
     dept_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -169,7 +170,7 @@ async def update_member_role(
     )
 
 
-@router.delete("/{dept_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{dept_id}/members/{user_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
     dept_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -196,8 +197,8 @@ async def share_resource(
     return res
 
 
-@router.delete(
-    "/{dept_id}/resources/{resource_type}/{resource_id}",
+@router.post(
+    "/{dept_id}/resources/{resource_type}/{resource_id}/unshare",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def unshare_resource(

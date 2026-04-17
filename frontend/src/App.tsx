@@ -5,6 +5,7 @@ import { initStatus } from "@/api/auth"
 import { useAuthStore } from "@/stores/auth"
 import { router } from "@/router"
 import { LoadingSpinner } from "@/components/shared/loading-spinner"
+import { ErrorBoundary } from "@/components/shared/error-boundary"
 
 export default function App() {
   const [ready, setReady] = useState(false)
@@ -15,7 +16,7 @@ export default function App() {
     async function bootstrap() {
       try {
         const status = await initStatus()
-        if (!status.initialized) {
+        if (status.needs_init) {
           router.navigate("/init", { replace: true })
         } else if (isAuthenticated) {
           await loadUser()
@@ -39,9 +40,9 @@ export default function App() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <RouterProvider router={router} />
       <Toaster />
-    </>
+    </ErrorBoundary>
   )
 }

@@ -8,8 +8,11 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tasks import safe_delay
 from app.knowledge.models import Chunk, Document, Folder, KnowledgeBase
 from app.knowledge.storage.minio_service import MinIOService
+from app.knowledge.embedding.tasks import embed_document_chunks
+from app.knowledge.ingestion.tasks import process_document
 
 logger = structlog.get_logger(__name__)
 
@@ -86,10 +89,12 @@ class ExportService:
                 lines.append(json.dumps({
                     "id": str(c.id),
                     "document_id": str(c.document_id),
+                    "folder_id": str(c.folder_id) if c.folder_id else None,
                     "content": c.content,
                     "level": c.level,
                     "position": c.position,
                     "token_count": c.token_count,
+                    "quality_score": c.quality_score,
                     "metadata": c.metadata_,
                 }))
             zf.writestr("chunks.jsonl", "\n".join(lines))
@@ -184,13 +189,19 @@ class ExportService:
                     new_doc_id = doc_id_map.get(cd["document_id"])
                     if new_doc_id is None:
                         continue
+                    mapped_chunk_folder = (
+                        folder_id_map.get(cd["folder_id"])
+                        if cd.get("folder_id") else None
+                    )
                     chunk = Chunk(
                         document_id=new_doc_id,
                         knowledge_base_id=kb.id,
+                        folder_id=mapped_chunk_folder,
                         content=cd["content"],
                         level=cd.get("level", 0),
                         position=cd.get("position", 0),
                         token_count=cd.get("token_count", 0),
+                        quality_score=cd.get("quality_score"),
                         metadata_=cd.get("metadata"),
                     )
                     self.db.add(chunk)
@@ -198,6 +209,15 @@ class ExportService:
 
             kb.document_count = len(doc_id_map)
             await self.db.flush()
+
+        if re_chunk:
+            # Re-chunk: dispatch full processing pipeline for each imported document
+            for old_id, new_id in doc_id_map.items():
+                safe_delay(process_document, str(new_id))
+        else:
+            # Import existing chunks: dispatch embedding for each document
+            for old_id, new_id in doc_id_map.items():
+                safe_delay(embed_document_chunks, str(new_id), str(kb.id))
 
         logger.info("kb_imported", kb_id=str(kb.id), doc_count=len(doc_id_map))
         return kb.id

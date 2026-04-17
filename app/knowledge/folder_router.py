@@ -55,7 +55,7 @@ async def get_folder(
     return await svc.get_folder(folder_id)
 
 
-@router.put("/{folder_id}", response_model=FolderResponse)
+@router.post("/{folder_id}/update", response_model=FolderResponse)
 async def update_folder(
     kb_id: uuid.UUID,
     folder_id: uuid.UUID,
@@ -68,7 +68,7 @@ async def update_folder(
     return await svc.update_folder(folder_id, data)
 
 
-@router.delete("/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{folder_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_folder(
     kb_id: uuid.UUID,
     folder_id: uuid.UUID,

@@ -1,12 +1,16 @@
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser, check_resource_access
+from app.auth.models import UserRole
 from app.core.database import get_db
 from app.core.dependencies import PaginatedResponse, PaginationParams
+from app.core.exceptions import ConflictError
 from app.department.service import DepartmentService
+from app.core.tasks import safe_delay
 from app.knowledge.ingestion.tasks import cascade_delete_kb
 from app.knowledge.schemas import KBCreate, KBResponse, KBUpdate
 from app.knowledge.service import KBService
@@ -31,9 +35,12 @@ async def list_kbs(
     pagination: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    dept_svc = DepartmentService(db)
-    accessible_ids = await dept_svc.get_accessible_resource_ids(current_user.id, "knowledge_base")
     svc = KBService(db)
+    if current_user.role == UserRole.SYSTEM_ADMIN:
+        accessible_ids = None
+    else:
+        dept_svc = DepartmentService(db)
+        accessible_ids = await dept_svc.get_accessible_resource_ids(current_user.id, "knowledge_base")
     items, total = await svc.list_kbs(
         current_user.id, accessible_ids, pagination.offset, pagination.page_size
     )
@@ -57,20 +64,55 @@ async def get_kb(
     return kb
 
 
-@router.put("/{kb_id}", response_model=KBResponse)
+@router.post("/{kb_id}/update", response_model=KBResponse)
 async def update_kb(
     kb_id: uuid.UUID,
     data: KBUpdate,
     current_user: CurrentUser,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    if_unmodified_since: str | None = Header(default=None, alias="If-Unmodified-Since"),
 ):
     svc = KBService(db)
     kb = await svc.get_kb(kb_id)
     await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
-    return await svc.update_kb(kb_id, data)
+
+    # Optimistic concurrency: caller passes the updated_at they saw; if the KB
+    # was modified between their read and this write, reject with 409.
+    expected = _parse_http_date(if_unmodified_since) if if_unmodified_since else None
+    try:
+        updated = await svc.update_kb(kb_id, data, if_unmodified_since=expected)
+    except ConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    # Surface latest mtime so the client can use it on the next write.
+    response.headers["Last-Modified"] = _to_http_date(updated.updated_at)
+    return updated
 
 
-@router.delete("/{kb_id}", status_code=status.HTTP_202_ACCEPTED)
+def _parse_http_date(value: str) -> datetime | None:
+    """Parse RFC 7231 date or ISO-8601 string; return None on failure.
+
+    Accepting both makes it friendly to typed front-end clients without
+    forcing them to format RFC dates.
+    """
+    from email.utils import parsedate_to_datetime
+    try:
+        return parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _to_http_date(dt: datetime) -> str:
+    from email.utils import format_datetime
+    return format_datetime(dt, usegmt=True)
+
+
+@router.post("/{kb_id}/delete", status_code=status.HTTP_202_ACCEPTED)
 async def delete_kb(
     kb_id: uuid.UUID,
     current_user: CurrentUser,
@@ -80,5 +122,5 @@ async def delete_kb(
     kb = await svc.get_kb(kb_id)
     await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "full")
     await svc.mark_kb_deleting(kb_id)
-    cascade_delete_kb.delay(str(kb_id))
+    safe_delay(cascade_delete_kb, str(kb_id))
     return {"detail": "Knowledge base deletion initiated"}

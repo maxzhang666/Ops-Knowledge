@@ -1,22 +1,31 @@
 import { create } from "zustand"
 import type { Message, RetrievalChunk } from "@/api/chat"
 
+interface ThinkingStep {
+  step: number
+  content: string
+}
+
 interface ChatState {
   activeConversationId: string | null
   messages: Message[]
   isStreaming: boolean
   pendingContent: string
-  thinkingSteps: string[]
+  thinkingSteps: ThinkingStep[]
   retrievalResults: RetrievalChunk[]
+  pendingMessageId: string | null
+  pendingTraceId: string | null
 
   setActiveConversation: (id: string | null) => void
+  updateConversationId: (id: string) => void
   setMessages: (messages: Message[]) => void
   addMessage: (message: Message) => void
   startStreaming: () => void
-  appendContent: (chunk: string) => void
-  addThinking: (step: string) => void
+  appendContent: (delta: string) => void
+  addThinking: (step: ThinkingStep) => void
   setRetrievalResults: (results: RetrievalChunk[]) => void
-  finishStreaming: () => void
+  setStreamMeta: (messageId: string, conversationId: string) => void
+  finishStreaming: (traceId?: string) => void
   reset: () => void
 }
 
@@ -27,9 +36,15 @@ export const useChatStore = create<ChatState>((set) => ({
   pendingContent: "",
   thinkingSteps: [],
   retrievalResults: [],
+  pendingMessageId: null,
+  pendingTraceId: null,
 
   setActiveConversation(id) {
     set({ activeConversationId: id, messages: [], pendingContent: "", thinkingSteps: [], retrievalResults: [] })
+  },
+
+  updateConversationId(id) {
+    set({ activeConversationId: id })
   },
 
   setMessages(messages) {
@@ -41,11 +56,11 @@ export const useChatStore = create<ChatState>((set) => ({
   },
 
   startStreaming() {
-    set({ isStreaming: true, pendingContent: "", thinkingSteps: [], retrievalResults: [] })
+    set({ isStreaming: true, pendingContent: "", thinkingSteps: [], retrievalResults: [], pendingMessageId: null, pendingTraceId: null })
   },
 
-  appendContent(chunk) {
-    set((s) => ({ pendingContent: s.pendingContent + chunk }))
+  appendContent(delta) {
+    set((s) => ({ pendingContent: s.pendingContent + delta }))
   },
 
   addThinking(step) {
@@ -56,8 +71,12 @@ export const useChatStore = create<ChatState>((set) => ({
     set({ retrievalResults: results })
   },
 
-  finishStreaming() {
-    set({ isStreaming: false })
+  setStreamMeta(messageId, conversationId) {
+    set({ pendingMessageId: messageId, activeConversationId: conversationId })
+  },
+
+  finishStreaming(traceId) {
+    set({ isStreaming: false, pendingTraceId: traceId ?? null })
   },
 
   reset() {
@@ -68,6 +87,8 @@ export const useChatStore = create<ChatState>((set) => ({
       pendingContent: "",
       thinkingSteps: [],
       retrievalResults: [],
+      pendingMessageId: null,
+      pendingTraceId: null,
     })
   },
 }))

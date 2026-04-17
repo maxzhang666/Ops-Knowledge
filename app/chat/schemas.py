@@ -7,6 +7,18 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=4000)
     conversation_id: uuid.UUID | None = None
+    # Spec 22.5 four-mode calling:
+    #   False (default) → sync: SSE if Accept:text/event-stream, else blocking JSON
+    #   True            → 202 Accepted + POST to callback_url OR poll via /messages/{id}
+    async_mode: bool = Field(default=False, alias="async")
+    callback_url: str | None = Field(default=None, max_length=500)
+
+    model_config = {"populate_by_name": True}
+
+
+class ConversationUpdate(BaseModel):
+    title: str | None = Field(None, max_length=200)
+    is_pinned: bool | None = None
 
 
 class ConversationResponse(BaseModel):
@@ -15,6 +27,7 @@ class ConversationResponse(BaseModel):
     agent_id: uuid.UUID
     user_id: uuid.UUID
     message_count: int
+    is_pinned: bool
     created_at: datetime
     updated_at: datetime
 

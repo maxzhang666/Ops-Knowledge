@@ -13,6 +13,7 @@ class ApiKeyCreate(BaseModel):
 class ApiKeyResponse(BaseModel):
     id: uuid.UUID
     name: str
+    raw_key: str
     key_prefix: str
     scope: str
     is_active: bool
@@ -21,10 +22,6 @@ class ApiKeyResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
-
-
-class ApiKeyCreated(ApiKeyResponse):
-    raw_key: str
 
 
 class InitRequest(BaseModel):

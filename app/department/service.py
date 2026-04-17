@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +23,7 @@ class DepartmentService:
         )
         self.db.add(dept)
         await self.db.flush()
+        await self.db.refresh(dept)
         return dept
 
     async def get_department(self, dept_id: uuid.UUID) -> Department | None:
@@ -36,6 +37,7 @@ class DepartmentService:
         for k, v in updates.items():
             setattr(dept, k, v)
         await self.db.flush()
+        await self.db.refresh(dept)
         return dept
 
     async def delete_department(self, dept_id: uuid.UUID) -> None:
@@ -55,9 +57,28 @@ class DepartmentService:
         result = await self.db.scalars(select(Department).order_by(Department.name))
         all_depts = result.all()
 
+        # Aggregate member counts in a single GROUP BY query so we don't
+        # do N extra round-trips. Departments with no members are absent
+        # from the map and default to 0.
+        count_rows = await self.db.execute(
+            select(UserDepartment.department_id, func.count(UserDepartment.id))
+            .group_by(UserDepartment.department_id)
+        )
+        counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in count_rows.all()}
+
+        # Explicit construction avoids model_validate walking the SQLAlchemy
+        # `children` relationship — that triggers lazy-load on the async
+        # session and raises MissingGreenlet. Same pattern as folder_service.
         dept_map: dict[uuid.UUID, DepartmentTreeResponse] = {}
         for d in all_depts:
-            dept_map[d.id] = DepartmentTreeResponse.model_validate(d)
+            dept_map[d.id] = DepartmentTreeResponse(
+                id=d.id,
+                name=d.name,
+                description=d.description,
+                parent_department_id=d.parent_department_id,
+                created_at=d.created_at,
+                member_count=counts.get(d.id, 0),
+            )
 
         roots: list[DepartmentTreeResponse] = []
         for d in dept_map.values():
@@ -157,21 +178,20 @@ class DepartmentService:
         )
         return list(result.all())
 
-    async def get_ancestor_department_ids(self, dept_ids: list[uuid.UUID]) -> list[uuid.UUID]:
-        """Recursively traverse upward to collect all ancestor department IDs."""
+    async def get_descendant_department_ids(self, dept_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        """Recursively traverse downward to collect all descendant department IDs."""
         all_ids: set[uuid.UUID] = set(dept_ids)
         pending = list(dept_ids)
 
         while pending:
             result = await self.db.scalars(
-                select(Department.parent_department_id).where(
-                    Department.id.in_(pending),
-                    Department.parent_department_id.isnot(None),
+                select(Department.id).where(
+                    Department.parent_department_id.in_(pending),
                 )
             )
-            parents = [pid for pid in result.all() if pid not in all_ids]
-            all_ids.update(parents)
-            pending = parents
+            children = [cid for cid in result.all() if cid not in all_ids]
+            all_ids.update(children)
+            pending = children
 
         return list(all_ids)
 
@@ -192,7 +212,7 @@ class DepartmentService:
         dept_ids = await self.get_user_department_ids(user_id)
         if not dept_ids:
             return None
-        all_dept_ids = await self.get_ancestor_department_ids(dept_ids)
+        all_dept_ids = await self.get_descendant_department_ids(dept_ids)
 
         result = await self.db.scalars(
             select(DepartmentResource.access_level).where(
@@ -217,7 +237,7 @@ class DepartmentService:
         dept_ids = await self.get_user_department_ids(user_id)
         if not dept_ids:
             return []
-        all_dept_ids = await self.get_ancestor_department_ids(dept_ids)
+        all_dept_ids = await self.get_descendant_department_ids(dept_ids)
 
         result = await self.db.scalars(
             select(DepartmentResource.resource_id).where(

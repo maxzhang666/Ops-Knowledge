@@ -24,7 +24,8 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   async loadNotifications() {
     try {
       const res = await notificationApi.list({ page_size: "20" })
-      set({ notifications: res.items })
+      const list = Array.isArray(res) ? res : (res as any).items ?? []
+      set({ notifications: list })
     } catch { /* silent */ }
   },
 

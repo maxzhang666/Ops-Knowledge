@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+import structlog
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +11,58 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.models import User
 from app.auth.schemas import UserCreate
 from app.core.config import settings
+
+logger = structlog.get_logger(__name__)
+
+
+def _redis_client():
+    """Lazy Redis client; fail-open on any error."""
+    try:
+        import redis
+        return redis.from_url(settings.REDIS_URL, socket_timeout=1, socket_connect_timeout=1)
+    except Exception:
+        return None
+
+
+def revoke_jti(jti: str, ttl_seconds: int) -> None:
+    """Blacklist a single token by jti."""
+    r = _redis_client()
+    if r is None:
+        return
+    try:
+        r.set(f"jwt:revoked_jti:{jti}", "1", ex=max(ttl_seconds, 1))
+    except Exception:
+        pass
+
+
+def revoke_user_tokens(user_id: str) -> None:
+    """Invalidate all tokens issued to a user before now."""
+    r = _redis_client()
+    if r is None:
+        return
+    try:
+        ts = int(datetime.now(timezone.utc).timestamp())
+        ttl = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400 + 3600
+        r.set(f"jwt:revoked_user:{user_id}", str(ts), ex=ttl)
+    except Exception:
+        pass
+
+
+def _is_revoked(jti: str | None, user_id: str, iat: int | None) -> bool:
+    r = _redis_client()
+    if r is None:
+        return False  # fail-open
+    try:
+        if jti and r.exists(f"jwt:revoked_jti:{jti}"):
+            return True
+        user_cutoff = r.get(f"jwt:revoked_user:{user_id}")
+        if user_cutoff and iat is not None:
+            cutoff_ts = int(user_cutoff.decode() if isinstance(user_cutoff, bytes) else user_cutoff)
+            if iat < cutoff_ts:
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def _hash_password(password: str) -> str:
@@ -36,12 +89,31 @@ class AuthService:
         return user
 
     async def authenticate(self, username: str, password: str) -> User | None:
-        stmt = select(User).where(User.username == username, User.is_active.is_(True))
-        result = await self.db.execute(stmt)
-        user = result.scalar_one_or_none()
-        if user is None or not _verify_password(password, user.hashed_password):
+        """Local-credential login — routes through the active AuthProvider.
+
+        Kept as a convenience wrapper so existing callers don't change. For
+        SSO flows (Phase 1b+) call ``authenticate_via_provider()`` directly
+        with provider-specific credentials.
+        """
+        return await self.authenticate_via_provider(
+            "local", {"username": username, "password": password},
+        )
+
+    async def authenticate_via_provider(
+        self, provider_name: str, credentials: dict,
+    ) -> User | None:
+        """Plugin-driven auth — dispatches to the named AuthProvider."""
+        from app.auth.providers import get_provider
+        provider = get_provider(provider_name)
+        if provider is None:
+            logger.warning("auth_provider_not_registered", name=provider_name)
             return None
-        return user
+        result = await provider.authenticate(self.db, credentials)
+        if result.user is None:
+            logger.info(
+                "auth_failed", provider=provider_name, reason=result.reason,
+            )
+        return result.user
 
     def create_tokens(self, user: User) -> dict[str, str]:
         access = self._create_token(
@@ -56,9 +128,14 @@ class AuthService:
 
     def verify_token(self, token: str) -> dict | None:
         try:
-            return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+            payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         except JWTError:
             return None
+        # Revocation check
+        user_id = str(payload.get("sub") or "")
+        if user_id and _is_revoked(payload.get("jti"), user_id, payload.get("iat")):
+            return None
+        return payload
 
     async def get_user_by_id(self, user_id: str) -> User | None:
         stmt = select(User).where(User.id == uuid.UUID(user_id), User.is_active.is_(True))
@@ -66,6 +143,9 @@ class AuthService:
         return result.scalar_one_or_none()
 
     def _create_token(self, data: dict, expires_delta: timedelta) -> str:
+        now = datetime.now(timezone.utc)
         to_encode = data.copy()
-        to_encode["exp"] = datetime.now(timezone.utc) + expires_delta
+        to_encode["exp"] = now + expires_delta
+        to_encode["iat"] = int(now.timestamp())
+        to_encode["jti"] = uuid.uuid4().hex
         return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)

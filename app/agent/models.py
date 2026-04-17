@@ -17,13 +17,24 @@ class Agent(Base, UUIDMixin, TimestampMixin):
         String(20), nullable=False, server_default="simple"
     )
 
-    knowledge_base_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    folder_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-
-    model_provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("model_providers.id"), nullable=False
+    knowledge_base_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
     )
-    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    folder_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+
+    model_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_providers.id"), nullable=True
+    )
+    model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True
+    )
+
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
 
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     retrieval_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,13 +10,33 @@ from app.auth.service import AuthService
 from app.core.database import get_db
 from app.department.service import DepartmentService
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    x_api_key: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    # API key authentication
+    if x_api_key:
+        from app.system.service import ApiKeyService
+        api_svc = ApiKeyService(db)
+        api_key = await api_svc.verify_key(x_api_key)
+        if api_key is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        request.state.api_key_scope = api_key.scope
+        auth_svc = AuthService(db)
+        user = await auth_svc.get_user_by_id(str(api_key.user_id))
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        return user
+
+    # JWT Bearer authentication
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
     svc = AuthService(db)
     payload = svc.verify_token(credentials.credentials)
     if payload is None:

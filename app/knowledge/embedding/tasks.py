@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.runtime_config import get_sync_runtime_config
 from app.knowledge.embedding.service import EmbeddingService
 from app.knowledge.milvus.service import MilvusService
 from app.knowledge.models import Chunk, Document, KnowledgeBase
@@ -26,11 +27,19 @@ def _get_async_engine():
 
 
 def _collection_name(kb_id: str) -> str:
-    return f"kb_{kb_id.replace('-', '_')}"
+    return f"kb_{kb_id}"
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    retry_backoff=True,
+    retry_backoff_max=240,
+    retry_jitter=True,
+)
 def embed_document_chunks(self, doc_id: str, kb_id: str) -> dict:
+    runtime_cfg = get_sync_runtime_config()
     engine = _get_sync_engine()
     try:
         with Session(engine) as session:
@@ -38,9 +47,10 @@ def embed_document_chunks(self, doc_id: str, kb_id: str) -> dict:
             if kb is None:
                 return {"status": "error", "message": "KB not found"}
 
+            registry_id = kb.embedding_model_id
             provider_id = kb.embedding_provider_id
             model_name = kb.embedding_model_name
-            if not provider_id or not model_name:
+            if not registry_id and (not provider_id or not model_name):
                 return {"status": "error", "message": "KB has no embedding config"}
 
             doc = session.get(Document, doc_id)
@@ -73,7 +83,7 @@ def embed_document_chunks(self, doc_id: str, kb_id: str) -> dict:
 
         # Async embedding via ModelService + Milvus insert
         collection = _collection_name(kb_id)
-        milvus_svc = MilvusService()
+        milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
 
         async def _run_embed():
             a_engine = _get_async_engine()
@@ -83,14 +93,22 @@ def embed_document_chunks(self, doc_id: str, kb_id: str) -> dict:
                     model_svc = ModelService(db)
                     emb_svc = EmbeddingService(model_svc, milvus_svc)
 
-                    dim = len(
-                        (await model_svc.embed(provider_id, model_name, ["dim_probe"]))[0]
-                    )
-                    milvus_svc.create_collection(collection, dim)
-
-                    return await emb_svc.embed_and_store(
-                        chunk_dicts, collection, provider_id, model_name,
-                    )
+                    if registry_id:
+                        dim = len(
+                            (await model_svc.embed_by_registry(registry_id, ["dim_probe"]))[0]
+                        )
+                        milvus_svc.create_collection(collection, dim)
+                        return await emb_svc.embed_and_store(
+                            chunk_dicts, collection, registry_id=registry_id,
+                        )
+                    else:
+                        dim = len(
+                            (await model_svc.embed(provider_id, model_name, ["dim_probe"]))[0]
+                        )
+                        milvus_svc.create_collection(collection, dim)
+                        return await emb_svc.embed_and_store(
+                            chunk_dicts, collection, provider_id, model_name,
+                        )
             finally:
                 await a_engine.dispose()
 
@@ -117,19 +135,28 @@ def embed_document_chunks(self, doc_id: str, kb_id: str) -> dict:
         engine.dispose()
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=120)
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=120,
+    retry_backoff=True,
+    retry_backoff_max=480,
+    retry_jitter=True,
+)
 def reindex_kb(self, kb_id: str) -> dict:
+    runtime_cfg = get_sync_runtime_config()
     engine = _get_sync_engine()
-    milvus_svc = MilvusService()
+    milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
     try:
         with Session(engine) as session:
             kb = session.get(KnowledgeBase, kb_id)
             if kb is None:
                 return {"status": "error", "message": "KB not found"}
 
+            registry_id = kb.embedding_model_id
             provider_id = kb.embedding_provider_id
             model_name = kb.embedding_model_name
-            if not provider_id or not model_name:
+            if not registry_id and (not provider_id or not model_name):
                 return {"status": "error", "message": "KB has no embedding config"}
 
             chunks = session.scalars(
@@ -173,14 +200,22 @@ def reindex_kb(self, kb_id: str) -> dict:
                     model_svc = ModelService(db)
                     emb_svc = EmbeddingService(model_svc, milvus_svc)
 
-                    dim = len(
-                        (await model_svc.embed(provider_id, model_name, ["dim_probe"]))[0]
-                    )
-                    milvus_svc.create_collection(new_collection, dim)
-
-                    return await emb_svc.embed_and_store(
-                        chunk_dicts, new_collection, provider_id, model_name,
-                    )
+                    if registry_id:
+                        dim = len(
+                            (await model_svc.embed_by_registry(registry_id, ["dim_probe"]))[0]
+                        )
+                        milvus_svc.create_collection(new_collection, dim)
+                        return await emb_svc.embed_and_store(
+                            chunk_dicts, new_collection, registry_id=registry_id,
+                        )
+                    else:
+                        dim = len(
+                            (await model_svc.embed(provider_id, model_name, ["dim_probe"]))[0]
+                        )
+                        milvus_svc.create_collection(new_collection, dim)
+                        return await emb_svc.embed_and_store(
+                            chunk_dicts, new_collection, provider_id, model_name,
+                        )
             finally:
                 await a_engine.dispose()
 

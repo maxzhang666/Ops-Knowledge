@@ -8,6 +8,7 @@ class ChunkResult:
     level: int = 0  # 0-3: document → section → subsection → paragraph
     position: int = 0
     metadata: dict = field(default_factory=dict)
+    parent_chunk_id: str | None = None
 
 
 class ChunkingStrategy(ABC):

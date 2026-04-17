@@ -32,14 +32,25 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWind
       setMessages([])
       return
     }
-    const res = await chatApi.getMessages(conversationId, { page_size: "100" })
-    setMessages(res.items)
-  }, [conversationId, setMessages])
+    const res = await chatApi.getMessages(agentId, conversationId, { page_size: "100" })
+    const list = Array.isArray(res) ? res : (res as any).items ?? []
+    setMessages(list)
+  }, [agentId, conversationId, setMessages])
 
+  // Load messages on conversationId change — but NOT during a live stream,
+  // because the SSE pipeline itself updates activeConversationId mid-flight
+  // (via message_start), and re-loading here would overwrite the streaming
+  // state. Skipping load while streaming keeps the ongoing session intact.
   useEffect(() => {
+    if (isStreaming) return
     loadMessages()
+  }, [loadMessages, isStreaming])
+
+  // Abort the stream only on unmount — NOT on conversationId change, which
+  // would terminate the stream that just updated conversationId itself.
+  useEffect(() => {
     return () => { abortStream() }
-  }, [loadMessages])
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -54,11 +65,11 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWind
     setRefOpen(true)
   }
 
-  const activeRetrievalResults = isStreaming ? retrievalResults : (messages[messages.length - 1]?.retrieval_results ?? [])
+  const activeRetrievalResults = isStreaming ? retrievalResults : []
 
   return (
-    <div className="flex h-full flex-col">
-      <ScrollArea className="flex-1 p-4">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <ScrollArea className="min-h-0 flex-1 p-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {messages.length === 0 && !isStreaming && welcomeMessage && (
             <div className="flex flex-col items-center gap-3 py-12 text-center">
@@ -69,16 +80,15 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWind
 
           {messages.map((msg) => (
             <div key={msg.id}>
-              {msg.thinking_steps && msg.thinking_steps.length > 0 && (
-                <ThinkingBlock steps={msg.thinking_steps} />
-              )}
               <MessageBubble message={msg} onCitationClick={handleCitation} />
             </div>
           ))}
 
           {isStreaming && (
             <div>
-              {thinkingSteps.length > 0 && <ThinkingBlock steps={thinkingSteps} />}
+              {thinkingSteps.length > 0 && (
+                <ThinkingBlock steps={thinkingSteps.map((t) => t.content)} />
+              )}
               {pendingContent && (
                 <div className="flex justify-start">
                   <div className="max-w-[75%] rounded-2xl bg-muted px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">

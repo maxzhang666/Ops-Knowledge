@@ -10,8 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.agent.models import Agent
 from app.chat.citations import extract_citations
-from app.chat.context import build_context
-from app.chat.prompt import assemble_prompt
+from app.chat.prompt import assemble_prompt, detect_required_vars, format_context_chunks
 from app.chat.service import ConversationService
 from app.core.config import settings
 from app.knowledge.retrieval.service import RetrievalService
@@ -19,14 +18,23 @@ from app.model.service import ModelService
 
 logger = structlog.get_logger(__name__)
 
-NO_RESULT_REFUSE_MSG = "Sorry, I could not find relevant information in the knowledge base to answer your question."
-NO_RESULT_HONEST_DISCLAIMER = (
-    "Note: I did not find directly relevant information in the knowledge base. "
-    "The following answer is based on general knowledge and may not be accurate.\n\n"
-)
-NO_RESULT_HYBRID_DISCLAIMER = (
-    "Note: Limited relevant information was found. The answer may include general knowledge.\n\n"
-)
+# Shared engine for pipeline sessions (avoids per-request pool creation)
+_pipeline_engine = None
+
+
+def _get_pipeline_engine():
+    global _pipeline_engine
+    if _pipeline_engine is None:
+        _pipeline_engine = create_async_engine(
+            settings.DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=10,
+        )
+    return _pipeline_engine
+
+
+# No-result handling is now the user's responsibility via prompt authoring.
+# See 16-chat-rag-pipeline.md §No-Result Handling — empty retrieval renders
+# {{context}} as the EMPTY_CONTEXT_PLACEHOLDER defined in prompt.py; the
+# user's prompt decides whether to refuse, answer from general knowledge, etc.
 
 
 async def run_rag_pipeline(
@@ -40,7 +48,7 @@ async def run_rag_pipeline(
     CRITICAL: This generator manages its own DB session because
     StreamingResponse returns before the generator is consumed.
     """
-    engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    engine = _get_pipeline_engine()
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     db_session = session_factory()
     try:
@@ -56,28 +64,35 @@ async def run_rag_pipeline(
             conversation_id = conv.id
 
         # Save user message
-        await conv_svc.add_message(conversation_id, "user", query)
-        await db_session.commit()
+        user_msg = await conv_svc.add_message(conversation_id, "user", query)
 
         trace_id = str(uuid.uuid4())
 
+        # Create assistant message with status="generating" BEFORE streaming
+        # so it persists in DB even if the SSE connection drops.
+        assistant_msg = await conv_svc.add_message(
+            conversation_id, "assistant", "",
+            status="generating", trace_id=trace_id,
+        )
+        await db_session.commit()
+
         yield ("message_start", {
+            "message_id": str(assistant_msg.id),
             "conversation_id": str(conversation_id),
-            "trace_id": trace_id,
         })
 
         # Load conversation history
+        # Load history EXCLUDING the user_msg/assistant_msg we just added
+        # (they're for DB persistence, not for prompt history).
+        exclude_ids = {user_msg.id, assistant_msg.id}
         history_msgs = await conv_svc.get_messages(conversation_id, limit=20)
         history = [
             {"role": m.role, "content": m.content}
             for m in history_msgs
-            if m.role in ("user", "assistant")
+            if m.role in ("user", "assistant") and m.id not in exclude_ids
         ]
-        # Exclude the current query from history (last user msg)
-        if history and history[-1]["content"] == query:
-            history = history[:-1]
 
-        context_str = build_context(history, conv.memory_summary)
+        memory_summary = conv.memory_summary
 
         # Retrieval config
         r_cfg = agent.retrieval_config or {}
@@ -88,33 +103,91 @@ async def run_rag_pipeline(
         chunks: list[dict] = []
         retrieval_info: dict = {}
 
-        if kb_ids:
-            # Need embedding config from retrieval_config
-            emb_provider_id = r_cfg.get("embedding_provider_id")
-            emb_model_name = r_cfg.get("embedding_model_name")
+        # E2: Validate provider is active before doing any work
+        if agent.model_id:
+            try:
+                provider, _ = await model_svc.resolve_model(agent.model_id)
+            except Exception:
+                yield ("content_delta", {"delta": "模型不可用，请检查智能体配置。"})
+                yield ("message_end", {"token_usage": {"input_tokens": 0, "output_tokens": 0}, "trace_id": trace_id})
+                return
+        elif agent.model_provider_id:
+            try:
+                provider = await model_svc.get_provider(agent.model_provider_id)
+                if not provider.is_active:
+                    yield ("content_delta", {"delta": "当前模型供应商已被禁用，请在智能体配置中更换模型。"})
+                    yield ("message_end", {"token_usage": {"input_tokens": 0, "output_tokens": 0}, "trace_id": trace_id})
+                    return
+            except Exception:
+                yield ("content_delta", {"delta": "模型供应商不可用，请检查智能体配置。"})
+                yield ("message_end", {"token_usage": {"input_tokens": 0, "output_tokens": 0}, "trace_id": trace_id})
+                return
 
-            if emb_provider_id and emb_model_name:
+        # Variable-driven retrieval: run retrieval iff the user's prompt
+        # contains {{context}}. This replaces the old "has kb_ids → retrieve"
+        # heuristic with explicit prompt-level intent.
+        prompt_vars = detect_required_vars(agent.system_prompt or "")
+        needs_retrieval = "context" in prompt_vars and bool(kb_ids)
+        kb_names: list[str] = []
+
+        # E1: Filter out deleted KBs before retrieval
+        if kb_ids:
+            from app.knowledge.service import KnowledgeBaseService
+            kb_svc = KnowledgeBaseService(db_session)
+            valid_kb_ids = []
+            for kid in kb_ids:
+                try:
+                    kb = await kb_svc.get_kb(uuid.UUID(str(kid)))
+                    if kb and kb.status != "deleting":
+                        valid_kb_ids.append(kid)
+                        kb_names.append(kb.name)
+                except Exception:
+                    pass  # KB deleted or not found, skip
+            if not valid_kb_ids and kb_ids:
+                logger.warning("agent_all_kbs_deleted", agent_id=str(agent.id))
+            kb_ids = valid_kb_ids
+
+        if needs_retrieval and kb_ids:
+            yield ("thinking", {"step": 0, "content": "检索知识库..."})
+
+            # Read embedding config from the first KB — prefer registry-based reference
+            from app.knowledge.models import KnowledgeBase
+            first_kb = await db_session.get(KnowledgeBase, uuid.UUID(str(kb_ids[0])))
+            emb_registry_id = first_kb.embedding_model_id if first_kb else None
+            emb_provider_id = first_kb.embedding_provider_id if first_kb else None
+            emb_model_name = first_kb.embedding_model_name if first_kb else None
+
+            # Merge KB retrieval_config as fallback for rewrite/reranker settings
+            kb_r_cfg = (first_kb.retrieval_config or {}) if first_kb else {}
+
+            can_embed = emb_registry_id or (emb_provider_id and emb_model_name)
+            if can_embed:
                 retrieval_svc = RetrievalService()
-                result = await retrieval_svc.retrieve(
-                    query=query,
-                    kb_ids=[str(k) for k in kb_ids],
-                    embedding_provider_id=uuid.UUID(str(emb_provider_id)),
-                    embedding_model_name=emb_model_name,
-                    top_k=top_k,
-                    folder_ids=[str(f) for f in folder_ids] if folder_ids else None,
-                    rewrite=r_cfg.get("rewrite", False),
-                    rewrite_history=history[-6:] if r_cfg.get("rewrite") else None,
-                    rewrite_provider_id=(
-                        uuid.UUID(str(r_cfg["rewrite_provider_id"]))
-                        if r_cfg.get("rewrite_provider_id") else None
+                retrieval_kwargs: dict = {
+                    "query": query,
+                    "kb_ids": [str(k) for k in kb_ids],
+                    "top_k": top_k,
+                    "folder_ids": [str(f) for f in folder_ids] if folder_ids else None,
+                    "rewrite": r_cfg.get("rewrite", kb_r_cfg.get("rewrite", False)),
+                    # Spec 16 §Query Rewriting: "last 4 messages" as context
+                    "rewrite_history": history[-4:] if r_cfg.get("rewrite", kb_r_cfg.get("rewrite")) else None,
+                    "rewrite_provider_id": (
+                        uuid.UUID(str(r_cfg.get("rewrite_provider_id") or kb_r_cfg.get("rewrite_provider_id", "")))
+                        if r_cfg.get("rewrite_provider_id") or kb_r_cfg.get("rewrite_provider_id") else None
                     ),
-                    rewrite_model_name=r_cfg.get("rewrite_model_name"),
-                    reranker_provider_id=(
-                        uuid.UUID(str(r_cfg["reranker_provider_id"]))
-                        if r_cfg.get("reranker_provider_id") else None
+                    "rewrite_model_name": r_cfg.get("rewrite_model_name") or kb_r_cfg.get("rewrite_model_name"),
+                    "reranker_provider_id": (
+                        uuid.UUID(str(r_cfg.get("reranker_provider_id") or kb_r_cfg.get("reranker_provider_id", "")))
+                        if r_cfg.get("reranker_provider_id") or kb_r_cfg.get("reranker_provider_id") else None
                     ),
-                    reranker_model_name=r_cfg.get("reranker_model_name"),
-                )
+                    "reranker_model_name": r_cfg.get("reranker_model_name") or kb_r_cfg.get("reranker_model_name"),
+                }
+                if emb_registry_id:
+                    retrieval_kwargs["embedding_model_registry_id"] = emb_registry_id
+                else:
+                    retrieval_kwargs["embedding_provider_id"] = uuid.UUID(str(emb_provider_id))
+                    retrieval_kwargs["embedding_model_name"] = emb_model_name
+                result = await retrieval_svc.retrieve(**retrieval_kwargs)
 
                 chunks = [
                     {
@@ -128,74 +201,105 @@ async def run_rag_pipeline(
                     for r in result.results
                 ]
                 retrieval_info = {
-                    "query_used": result.query_used,
-                    "timing_ms": result.timing_ms,
-                    "chunk_count": len(chunks),
-                    "total_searched": result.total_searched,
+                    "chunks": [
+                        {
+                            "id": c["chunk_id"],
+                            "content_preview": c["content"][:200],
+                            "score": round(c["score"], 4),
+                            "document_title": c["title"],
+                        }
+                        for c in chunks
+                    ],
                 }
 
         if retrieval_info:
             yield ("retrieval_info", retrieval_info)
 
-        # No-result handling
-        no_result = len(chunks) == 0 and len(kb_ids) > 0
-        no_result_mode = agent.no_result_mode or "honest"
+        # Dynamic token budget. litellm.get_model_info only knows well-known
+        # models; unknown/custom ones quietly fall back to 6000.
+        max_ctx = 6000
+        try:
+            import litellm
+            model_key: str | None = None
+            if agent.model_id:
+                _provider, _model_id_str = await model_svc.resolve_model(agent.model_id)
+                model_key = _model_id_str
+            elif agent.model_provider_id and agent.model_name:
+                model_key = agent.model_name
+            if model_key:
+                info = litellm.get_model_info(model_key)
+                if info and info.get("max_input_tokens"):
+                    max_ctx = info["max_input_tokens"]
+        except Exception:
+            pass  # unknown model — keep fallback, not fatal
 
-        if no_result and no_result_mode == "refuse":
-            yield ("content_delta", {"text": NO_RESULT_REFUSE_MSG})
-            await conv_svc.add_message(
-                conversation_id, "assistant", NO_RESULT_REFUSE_MSG,
-                status="completed", trace_id=trace_id,
-            )
-            await db_session.commit()
-            elapsed = int((time.monotonic() - t0) * 1000)
-            yield ("message_end", {"status": "completed", "timing_ms": elapsed})
-            return
+        # Build variable dictionary for prompt rendering
+        context_budget = int(max_ctx * 0.6)
+        variables = {
+            "context": format_context_chunks(chunks, context_budget) if "context" in prompt_vars else "",
+            "history_summary": memory_summary or "",
+            "query": query,
+            "knowledge_names": ", ".join(kb_names),
+            "kb_count": str(len(kb_ids)),
+        }
 
-        # Assemble prompt
         prompt_messages = assemble_prompt(
             system_prompt=agent.system_prompt,
-            chunks=chunks,
+            variables=variables,
             history=history,
             query=query,
+            max_context_tokens=max_ctx,
         )
 
-        # Prepend disclaimer for no-result modes
-        disclaimer = ""
-        if no_result and no_result_mode == "honest":
-            disclaimer = NO_RESULT_HONEST_DISCLAIMER
-        elif no_result and no_result_mode == "hybrid":
-            disclaimer = NO_RESULT_HYBRID_DISCLAIMER
-
         # Stream LLM response
-        full_content = disclaimer
-        if disclaimer:
-            yield ("content_delta", {"text": disclaimer})
+        full_content = ""
 
         input_tokens = 0
         output_tokens = 0
+        thinking_step = 0
 
         try:
-            stream = model_svc.chat_stream(
-                agent.model_provider_id,
-                agent.model_name,
-                prompt_messages,
-            )
-            async for chunk_data in stream:
+            import asyncio as _asyncio
+            if agent.model_id:
+                stream = model_svc.chat_stream_by_registry(
+                    agent.model_id, prompt_messages,
+                )
+            else:
+                stream = model_svc.chat_stream(
+                    agent.model_provider_id, agent.model_name, prompt_messages,
+                )
+            # Hard per-chunk timeout: if proxy / LiteLLM hang waiting for a
+            # chunk, fail fast instead of hanging the SSE connection forever.
+            _iter = stream.__aiter__()
+            while True:
+                try:
+                    chunk_data = await _asyncio.wait_for(_iter.__anext__(), timeout=45)
+                except StopAsyncIteration:
+                    break
+                except _asyncio.TimeoutError:
+                    raise TimeoutError("LLM stream timed out waiting for next chunk (45s)")
                 choices = chunk_data.get("choices", [])
                 if not choices:
                     continue
                 delta = choices[0].get("delta", {})
 
-                # Thinking content
+                # Thinking content — respect thinking_detail level
                 if agent.show_thinking and delta.get("reasoning_content"):
-                    yield ("thinking", {"text": delta["reasoning_content"]})
+                    thinking_step += 1
+                    detail_level = agent.thinking_detail or "normal"
+                    if detail_level == "minimal":
+                        # Minimal: only emit stage labels, not raw reasoning
+                        if thinking_step == 1:
+                            yield ("thinking", {"step": 1, "content": "分析中..."})
+                    else:
+                        # Normal: forward LLM reasoning as-is
+                        yield ("thinking", {"step": thinking_step, "content": delta["reasoning_content"]})
 
                 # Main content
                 text = delta.get("content", "")
                 if text:
                     full_content += text
-                    yield ("content_delta", {"text": text})
+                    yield ("content_delta", {"delta": text})
 
                 # Token usage (from final chunk)
                 usage = chunk_data.get("usage")
@@ -203,16 +307,20 @@ async def run_rag_pipeline(
                     input_tokens = usage.get("prompt_tokens", 0)
                     output_tokens = usage.get("completion_tokens", 0)
 
-        except Exception:
+        except Exception as exc:
             logger.exception("llm_stream_error", trace_id=trace_id)
-            error_msg = "An error occurred while generating the response. Please try again."
+            # Surface the real reason so users can fix misconfiguration (bad
+            # model name, missing api_key, unreachable base_url, etc.)
+            detail = str(exc).strip() or exc.__class__.__name__
+            error_msg = f"生成出错：{detail[:500]}"
             if not full_content.strip():
                 full_content = error_msg
-                yield ("content_delta", {"text": error_msg})
-            yield ("message_end", {"status": "error"})
-            await conv_svc.add_message(
-                conversation_id, "assistant", full_content,
-                status="error", trace_id=trace_id,
+                yield ("content_delta", {"delta": error_msg})
+            yield ("message_end", {"token_usage": {"input_tokens": 0, "output_tokens": 0}, "trace_id": trace_id})
+            await conv_svc.update_message(
+                assistant_msg.id,
+                content=full_content,
+                status="error",
             )
             await db_session.commit()
             return
@@ -229,27 +337,45 @@ async def run_rag_pipeline(
         metadata = {
             "cited_sources": cited_sources,
             "chunk_count": len(chunks),
+            "retrieval_chunks": [
+                {
+                    "id": c["chunk_id"],
+                    "content_preview": c["content"][:200],
+                    "score": round(c["score"], 4),
+                    "document_title": c["title"],
+                    "document_id": c.get("document_id"),
+                    "source_kb_id": c.get("source_kb_id"),
+                }
+                for c in chunks
+            ],
         }
 
-        # Save assistant message
-        await conv_svc.add_message(
-            conversation_id, "assistant", full_content,
-            status="completed", metadata=metadata,
-            token_usage=token_usage, trace_id=trace_id,
+        # Update the pre-created assistant message with final content
+        await conv_svc.update_message(
+            assistant_msg.id,
+            content=full_content,
+            status="completed",
+            metadata_=metadata,
+            token_usage=token_usage,
         )
         await db_session.commit()
 
-        elapsed = int((time.monotonic() - t0) * 1000)
         yield ("message_end", {
-            "status": "completed",
-            "timing_ms": elapsed,
             "token_usage": token_usage,
-            "cited_sources": cited_sources,
+            "trace_id": trace_id,
         })
+
+        # Async post-processing tasks
+        from app.chat.tasks import generate_title, summarize_conversation
+        from app.core.tasks import safe_delay
+        if conv.title is None:
+            safe_delay(generate_title, str(conversation_id), query)
+        if conv.message_count > 10:
+            safe_delay(summarize_conversation, str(conversation_id))
 
     except Exception:
         logger.exception("pipeline_error")
-        yield ("message_end", {"status": "error", "message": "An internal error occurred."})
+        yield ("message_end", {"token_usage": {"input_tokens": 0, "output_tokens": 0}, "trace_id": ""})
     finally:
         await db_session.close()
-        await engine.dispose()
+        # Do NOT dispose engine — it's a module-level shared pool.

@@ -10,18 +10,22 @@ class CompositeStrategy(ChunkingStrategy):
         if not text or not text.strip():
             return []
 
+        import uuid
+
         chunk_size = config.get("chunk_size", 500)
         primary_chunks = self.primary.chunk(text, config)
         results: list[ChunkResult] = []
         pos = 0
 
         for pc in primary_chunks:
+            parent_id = str(uuid.uuid4())
             if len(pc.content) > chunk_size:
                 sub = self.secondary.chunk(pc.content, config)
                 for sc in sub:
-                    sc.level = max(sc.level, pc.level)
+                    sc.level = pc.level + 1
                     sc.metadata = {**pc.metadata, **sc.metadata}
                     sc.position = pos
+                    sc.parent_chunk_id = parent_id
                     results.append(sc)
                     pos += 1
             else:

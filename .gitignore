@@ -4,6 +4,9 @@ docs/superpowers/
 # Brainstorming artifacts
 .superpowers/
 
+# Claude local state (memory, plans, scoped config)
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]

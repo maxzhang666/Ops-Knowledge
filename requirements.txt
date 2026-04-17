@@ -32,8 +32,13 @@ httpx==0.28.1
 # Task queue
 celery[redis]==5.5.2
 
-# LLM Gateway
-litellm>=1.63.0,!=1.82.7,!=1.82.8
+# LLM providers
+openai>=1.50.0            # primary: OpenAI-compatible Provider adapter
+anthropic>=0.40.0         # primary: Anthropic Provider adapter
+litellm>=1.82.6           # utility (token_counter, completion_cost) + long-tail Provider fallback (Bedrock, Vertex, Cohere, ...)
+
+# Token counting (used for chunk token estimation; litellm also depends on this)
+tiktoken>=0.7.0
 
 # Document parsing: markitdown installed separately in setup.sh (--no-deps to skip magika/onnxruntime)
 # markitdown==0.1.5
@@ -43,6 +48,9 @@ structlog>=25.1.0
 
 # Rate limiting
 slowapi==0.1.9
+
+# File type detection
+python-magic>=0.4.27
 
 # Testing
 pytest==8.3.5

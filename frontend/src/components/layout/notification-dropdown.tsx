@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { TimeDisplay } from "@/components/shared/time-display"
 import { useNotificationStore } from "@/stores/notification"
+import { resolveNotificationLink } from "@/api/notification"
 import { cn } from "@/lib/utils"
 
 const POLL_INTERVAL = 30_000
@@ -82,13 +83,15 @@ export function NotificationDropdown() {
             <DropdownMenuItem
               key={n.id}
               className="flex flex-col items-start gap-0.5 py-2"
-              onClick={() => handleClick(n.id, n.link)}
+              onClick={() => handleClick(n.id, resolveNotificationLink(n))}
             >
               <div className="flex w-full items-center gap-2">
                 {!n.is_read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
                 <span className={cn("flex-1 truncate text-sm", !n.is_read && "font-medium")}>{n.title}</span>
               </div>
-              <p className="line-clamp-1 w-full text-xs text-muted-foreground">{n.content}</p>
+              {n.content && (
+                <p className="line-clamp-1 w-full text-xs text-muted-foreground">{n.content}</p>
+              )}
               <span className="text-[10px] text-muted-foreground">
                 <TimeDisplay value={n.created_at} />
               </span>

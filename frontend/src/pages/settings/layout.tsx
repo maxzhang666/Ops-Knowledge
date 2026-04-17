@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom"
-import { Cpu, Building2, Users, Activity, UserCircle, Key } from "lucide-react"
+import { Cpu, Building2, Users, Settings, UserCircle, Key } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuthStore } from "@/stores/auth"
 
@@ -7,7 +7,7 @@ const allNavItems = [
   { to: "/settings/models", icon: Cpu, label: "模型供应商", adminOnly: false },
   { to: "/settings/departments", icon: Building2, label: "部门管理", adminOnly: true },
   { to: "/settings/users", icon: Users, label: "用户管理", adminOnly: true },
-  { to: "/settings/system", icon: Activity, label: "系统状态", adminOnly: true },
+  { to: "/settings/system", icon: Settings, label: "系统管理", adminOnly: true },
   { to: "/settings/profile", icon: UserCircle, label: "个人设置", adminOnly: false },
   { to: "/settings/api-keys", icon: Key, label: "API 密钥", adminOnly: false },
 ]

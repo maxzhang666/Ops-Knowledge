@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.signals import worker_ready
 
 from app.core.config import settings
 
@@ -12,6 +13,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     task_routes={
         "app.knowledge.ingestion.tasks.*": {"queue": "document"},
@@ -19,10 +21,20 @@ celery_app.conf.update(
     },
     task_default_queue="default",
     beat_schedule={
-        "consistency-scan-hourly": {
+        "consistency-scan": {
             "task": "app.system.tasks.consistency_scan",
-            "schedule": 3600.0,
+            "schedule": 1800.0,  # 30 minutes
+        },
+        "disk-space-monitor": {
+            "task": "app.system.tasks.disk_space_monitor",
+            "schedule": 3600.0,  # 1 hour
         },
     },
 )
 celery_app.autodiscover_tasks(["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system"])
+
+
+@worker_ready.connect
+def _start_runtime_config_subscriber(**_kwargs) -> None:
+    from app.core.runtime_config import start_sync_subscriber
+    start_sync_subscriber()

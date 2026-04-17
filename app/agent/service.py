@@ -1,4 +1,6 @@
+import json
 import uuid
+from pathlib import Path
 
 import structlog
 from sqlalchemy import func, select
@@ -8,9 +10,29 @@ from app.agent.models import Agent
 from app.agent.schemas import AgentCreate, AgentUpdate
 from app.core.dependencies import apply_dept_scope
 from app.core.exceptions import NotFoundError
+from app.department.models import DepartmentResource
 from app.department.service import DepartmentService
 
 logger = structlog.get_logger(__name__)
+
+_SEED_PROMPT_TEMPLATES = Path(__file__).resolve().parent.parent / "core" / "seed" / "prompt_templates.json"
+
+
+def _default_system_prompt() -> str:
+    """Return the ``rag-basic`` template body as the default Agent system prompt.
+
+    Spec 04/16 require new agents to be pre-filled with ``rag-basic`` so they
+    are immediately functional (include ``{{context}}`` + citation rules).
+    Users can replace this at creation time or from the Persona panel.
+    """
+    try:
+        data = json.loads(_SEED_PROMPT_TEMPLATES.read_text(encoding="utf-8"))
+        for tpl in data:
+            if tpl.get("id") == "rag-basic":
+                return tpl.get("system_prompt", "") or ""
+    except Exception:
+        logger.warning("rag_basic_template_missing")
+    return ""
 
 
 class AgentService:
@@ -20,15 +42,19 @@ class AgentService:
     async def create_agent(
         self, data: AgentCreate, user_id: uuid.UUID
     ) -> Agent:
+        # Default to rag-basic template so new agents work out-of-box
+        # (spec 04:32 / 16:121). Caller can override by passing a prompt.
+        system_prompt = data.system_prompt if data.system_prompt else _default_system_prompt()
         agent = Agent(
             name=data.name,
             description=data.description,
             avatar=data.avatar,
+            agent_type=data.agent_type,
             knowledge_base_ids=data.knowledge_base_ids,
             folder_ids=data.folder_ids,
             model_provider_id=data.model_provider_id,
             model_name=data.model_name,
-            system_prompt=data.system_prompt,
+            system_prompt=system_prompt,
             retrieval_config=data.retrieval_config,
             welcome_message=data.welcome_message,
             show_thinking=data.show_thinking,
@@ -38,6 +64,7 @@ class AgentService:
         )
         self.db.add(agent)
         await self.db.flush()
+        await self.db.refresh(agent)  # load server-generated created_at/updated_at
 
         if data.share_to_dept:
             dept_svc = DepartmentService(self.db)
@@ -47,6 +74,7 @@ class AgentService:
                     dept_id, "agent", agent.id, "use", user_id
                 )
 
+        await self._attach_share_flag(agent, user_id)
         logger.info("agent_created", agent_id=str(agent.id), name=data.name)
         return agent
 
@@ -59,14 +87,17 @@ class AgentService:
     async def list_agents(
         self,
         user_id: uuid.UUID,
-        accessible_ids: list[uuid.UUID],
+        accessible_ids: list[uuid.UUID] | None,
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[Agent], int]:
         base = select(Agent).where(Agent.is_active.is_(True))
-        stmt = apply_dept_scope(
-            base, accessible_ids, user_id, Agent.id, Agent.created_by
-        )
+        if accessible_ids is not None:
+            stmt = apply_dept_scope(
+                base, accessible_ids, user_id, Agent.id, Agent.created_by
+            )
+        else:
+            stmt = base
 
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_stmt)).scalar() or 0
@@ -77,14 +108,82 @@ class AgentService:
         return list(rows.all()), total
 
     async def update_agent(
-        self, agent_id: uuid.UUID, data: AgentUpdate
+        self,
+        agent_id: uuid.UUID,
+        data: AgentUpdate,
+        user_id: uuid.UUID,
+        if_unmodified_since=None,
     ) -> Agent:
         agent = await self.get_agent(agent_id)
+        if if_unmodified_since and agent.updated_at != if_unmodified_since:
+            from app.core.exceptions import ConflictError
+            raise ConflictError("Agent has been modified by another user")
         updates = data.model_dump(exclude_unset=True)
+        share_flag = updates.pop("share_to_dept", None)
         for k, v in updates.items():
             setattr(agent, k, v)
         await self.db.flush()
+        await self.db.refresh(agent)  # load server-generated updated_at
+
+        if share_flag is not None:
+            await self._sync_share_to_dept(agent, user_id, share_flag)
+
+        await self._attach_share_flag(agent, user_id)
         return agent
+
+    async def _sync_share_to_dept(
+        self, agent: Agent, user_id: uuid.UUID, share: bool,
+    ) -> None:
+        dept_svc = DepartmentService(self.db)
+        dept_ids = await dept_svc.get_user_department_ids(user_id)
+        for dept_id in dept_ids:
+            if share:
+                try:
+                    await dept_svc.share_resource(
+                        dept_id, "agent", agent.id, "use", user_id
+                    )
+                except Exception:
+                    pass  # already shared — unique constraint
+            else:
+                await dept_svc.unshare_resource(dept_id, "agent", agent.id)
+
+    async def _attach_share_flag(self, agent: Agent, user_id: uuid.UUID) -> None:
+        """Set non-persisted `share_to_dept` attribute based on current shares."""
+        dept_svc = DepartmentService(self.db)
+        dept_ids = await dept_svc.get_user_department_ids(user_id)
+        if not dept_ids:
+            agent.share_to_dept = False
+            return
+        row = (await self.db.execute(
+            select(DepartmentResource.id).where(
+                DepartmentResource.resource_type == "agent",
+                DepartmentResource.resource_id == agent.id,
+                DepartmentResource.department_id.in_(dept_ids),
+            ).limit(1)
+        )).scalar_one_or_none()
+        agent.share_to_dept = row is not None
+
+    async def attach_share_flags(
+        self, agents: list[Agent], user_id: uuid.UUID,
+    ) -> None:
+        """Batch-set share_to_dept on a list of agents (avoids N queries)."""
+        if not agents:
+            return
+        dept_svc = DepartmentService(self.db)
+        dept_ids = await dept_svc.get_user_department_ids(user_id)
+        if not dept_ids:
+            for a in agents:
+                a.share_to_dept = False
+            return
+        shared_ids = set((await self.db.execute(
+            select(DepartmentResource.resource_id).where(
+                DepartmentResource.resource_type == "agent",
+                DepartmentResource.resource_id.in_([a.id for a in agents]),
+                DepartmentResource.department_id.in_(dept_ids),
+            )
+        )).scalars().all())
+        for a in agents:
+            a.share_to_dept = a.id in shared_ids
 
     async def delete_agent(self, agent_id: uuid.UUID) -> None:
         agent = await self.get_agent(agent_id)

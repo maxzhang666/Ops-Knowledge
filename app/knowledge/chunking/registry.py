@@ -3,7 +3,9 @@ from __future__ import annotations
 from app.knowledge.chunking.base import ChunkingStrategy
 from app.knowledge.chunking.code import CodeAwareStrategy
 from app.knowledge.chunking.composite import CompositeStrategy
+from app.knowledge.chunking.html import HTMLStructureStrategy
 from app.knowledge.chunking.markdown import MarkdownStrategy
+from app.knowledge.chunking.pdf_layout import PDFLayoutStrategy
 from app.knowledge.chunking.qa import QAPairStrategy
 from app.knowledge.chunking.recursive import RecursiveCharacterStrategy
 from app.knowledge.chunking.sentence import SentenceStrategy
@@ -16,6 +18,8 @@ _STRATEGIES: dict[str, type[ChunkingStrategy]] = {
     "table": TableAwareStrategy,
     "code": CodeAwareStrategy,
     "qa": QAPairStrategy,
+    "html": HTMLStructureStrategy,
+    "pdf_layout": PDFLayoutStrategy,
 }
 
 

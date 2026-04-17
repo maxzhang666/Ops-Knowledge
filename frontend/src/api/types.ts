@@ -22,5 +22,5 @@ export interface TokenResponse {
 }
 
 export interface InitStatus {
-  initialized: boolean
+  needs_init: boolean
 }

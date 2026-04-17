@@ -27,6 +27,7 @@ class ConversationService:
         )
         self.db.add(conv)
         await self.db.flush()
+        await self.db.refresh(conv)
         logger.info("conversation_created", conversation_id=str(conv.id))
         return conv
 
@@ -87,15 +88,51 @@ class ConversationService:
     async def get_messages(
         self,
         conversation_id: uuid.UUID,
+        offset: int = 0,
         limit: int = 50,
     ) -> list[Message]:
         result = await self.db.scalars(
             select(Message)
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.created_at.asc())
+            .offset(offset)
             .limit(limit)
         )
         return list(result.all())
+
+    async def get_message(
+        self,
+        message_id: uuid.UUID,
+    ) -> Message:
+        msg = await self.db.get(Message, message_id)
+        if msg is None:
+            raise NotFoundError("Message", str(message_id))
+        return msg
+
+    async def update_message(
+        self,
+        message_id: uuid.UUID,
+        **kwargs,
+    ) -> Message:
+        msg = await self.get_message(message_id)
+        for k, v in kwargs.items():
+            if v is not None:
+                setattr(msg, k, v)
+        await self.db.flush()
+        return msg
+
+    async def update_conversation(
+        self,
+        conversation_id: uuid.UUID,
+        **kwargs,
+    ) -> Conversation:
+        conv = await self.get_conversation(conversation_id)
+        for k, v in kwargs.items():
+            if v is not None:
+                setattr(conv, k, v)
+        await self.db.flush()
+        await self.db.refresh(conv)
+        return conv
 
     async def delete_conversation(self, conversation_id: uuid.UUID) -> None:
         conv = await self.get_conversation(conversation_id)

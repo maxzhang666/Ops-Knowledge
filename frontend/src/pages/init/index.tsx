@@ -7,9 +7,9 @@ import { StepTest } from "./step-test"
 
 const steps = [
   { label: "创建管理员", component: StepAdmin },
-  { label: "AI 提供商", component: StepProvider },
-  { label: "知识库", component: StepKnowledge },
-  { label: "完成", component: StepTest },
+  { label: "配置模型", component: StepProvider },
+  { label: "创建知识库", component: StepKnowledge },
+  { label: "测试问答", component: StepTest },
 ]
 
 export default function InitWizard() {

@@ -80,6 +80,21 @@ class ChunkService:
         await self.db.flush()
         return chunk
 
+    async def preview_split(
+        self, chunk_id: uuid.UUID, split_positions: list[int],
+    ) -> list[dict]:
+        """Preview split result without persistence — returns per-segment content and token count."""
+        chunk = await self.get_chunk(chunk_id)
+        content = chunk.content
+        positions = sorted(set(split_positions))
+
+        if not positions or any(p <= 0 or p >= len(content) for p in positions):
+            raise ValidationError("Invalid split positions")
+
+        boundaries = [0, *positions, len(content)]
+        segments = [content[boundaries[i]:boundaries[i + 1]] for i in range(len(boundaries) - 1)]
+        return [{"content": s, "token_count": len(s.split())} for s in segments]
+
     async def split_chunk(
         self, chunk_id: uuid.UUID, split_positions: list[int], user_id: uuid.UUID,
     ) -> list[Chunk]:
@@ -117,6 +132,8 @@ class ChunkService:
         self.db.add_all(new_chunks)
         await self.db.delete(chunk)
         await self.db.flush()
+        for c in new_chunks:
+            await self.db.refresh(c)
         return new_chunks
 
     async def merge_chunks(
@@ -159,6 +176,7 @@ class ChunkService:
         for c in chunks:
             await self.db.delete(c)
         await self.db.flush()
+        await self.db.refresh(merged)
         return merged
 
     async def delete_chunk(self, chunk_id: uuid.UUID) -> None:

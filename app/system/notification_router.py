@@ -1,10 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser
 from app.core.database import get_db
+from app.system.models import Notification
 from app.system.schemas import NotificationResponse
 from app.system.service import NotificationService
 
@@ -32,17 +33,22 @@ async def unread_count(
     return {"count": await svc.unread_count(current_user.id)}
 
 
-@router.patch("/{notif_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{notif_id}/read", status_code=status.HTTP_204_NO_CONTENT)
 async def mark_read(
     notif_id: uuid.UUID,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
+    notif = await db.get(Notification, notif_id)
+    if notif is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    if notif.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your notification")
     svc = NotificationService(db)
     await svc.mark_read(notif_id)
 
 
-@router.patch("/read-all", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
 async def mark_all_read(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),

@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import * as authApi from "@/api/auth"
+import { api } from "@/api/client"
 import type { User } from "@/api/types"
 
 interface AuthState {
@@ -7,7 +8,7 @@ interface AuthState {
   isAuthenticated: boolean
   isLoading: boolean
   login: (username: string, password: string) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   loadUser: () => Promise<void>
   setUser: (user: User) => void
 }
@@ -25,7 +26,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user, isAuthenticated: true })
   },
 
-  logout() {
+  async logout() {
+    // Revoke server-side first so the jti is blacklisted. If the call fails
+    // (e.g. network) we still proceed with local cleanup — the worst case is
+    // the token remains valid until natural expiry.
+    try { await api.post("/auth/logout") } catch { /* best-effort */ }
     localStorage.removeItem("access_token")
     localStorage.removeItem("refresh_token")
     set({ user: null, isAuthenticated: false })

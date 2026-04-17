@@ -1,4 +1,4 @@
-import { streamChat, type SSEEvent } from "@/api/chat"
+import { chatApi, streamChat, type SSEEvent } from "@/api/chat"
 import { useChatStore } from "@/stores/chat"
 
 let abortController: AbortController | null = null
@@ -6,6 +6,33 @@ let abortController: AbortController | null = null
 export function abortStream() {
   abortController?.abort()
   abortController = null
+}
+
+async function _tryRecover(
+  agentId: string,
+  conversationId: string | undefined,
+  messageId: string | null,
+  pendingContent: string,
+): Promise<void> {
+  if (!messageId || !conversationId) return
+  const s = useChatStore.getState()
+  try {
+    const msg = await chatApi.getMessage(agentId, conversationId, messageId)
+    if (msg.status === "completed" && msg.content) {
+      // Fill in what the client didn't receive before the disconnect
+      if (msg.content.length > pendingContent.length && msg.content.startsWith(pendingContent)) {
+        s.appendContent(msg.content.slice(pendingContent.length))
+      } else if (msg.content && !pendingContent) {
+        s.appendContent(msg.content)
+      }
+    } else if (msg.status === "generating") {
+      s.appendContent("\n\n[连接中断，生成已停止。请重试以继续。]")
+    } else if (msg.status === "error") {
+      s.appendContent("\n\n[生成失败，请重试]")
+    }
+  } catch {
+    s.appendContent(`\n\n[网络中断，无法恢复连接]`)
+  }
 }
 
 export async function sendMessage(agentId: string, content: string, conversationId?: string) {
@@ -23,6 +50,7 @@ export async function sendMessage(agentId: string, content: string, conversation
   abortController = new AbortController()
 
   let newConversationId = conversationId
+  let assistantMessageId: string | null = null
 
   try {
     await streamChat(
@@ -31,32 +59,33 @@ export async function sendMessage(agentId: string, content: string, conversation
       conversationId,
       (event: SSEEvent) => {
         const s = useChatStore.getState()
+        const data = (() => {
+          try { return JSON.parse(event.data) } catch { return {} }
+        })()
+
         switch (event.event) {
-          case "content":
-            s.appendContent(event.data)
+          case "message_start":
+            if (data.conversation_id) {
+              newConversationId = data.conversation_id
+              s.updateConversationId(data.conversation_id)
+            }
+            if (data.message_id) {
+              assistantMessageId = data.message_id
+            }
+            break
+          case "content_delta":
+            s.appendContent(data.delta || "")
             break
           case "thinking":
-            s.addThinking(event.data)
+            s.addThinking({ step: data.step, content: data.content })
             break
-          case "retrieval": {
-            try {
-              const results = JSON.parse(event.data)
-              s.setRetrievalResults(results)
-            } catch { /* ignore parse errors */ }
+          case "retrieval_info":
+            if (data.chunks) {
+              s.setRetrievalResults(data.chunks)
+            }
             break
-          }
-          case "done": {
-            try {
-              const meta = JSON.parse(event.data)
-              if (meta.conversation_id) {
-                newConversationId = meta.conversation_id
-                s.setActiveConversation(meta.conversation_id)
-              }
-            } catch { /* ignore */ }
-            break
-          }
-          case "error":
-            s.appendContent(`\n\n[Error: ${event.data}]`)
+          case "message_end":
+            // Stream complete — metadata available in data.token_usage, data.trace_id
             break
         }
       },
@@ -64,19 +93,18 @@ export async function sendMessage(agentId: string, content: string, conversation
     )
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return
+    // Network disconnect / SSE broken — attempt recovery via DB message state
     const s = useChatStore.getState()
-    s.appendContent(`\n\n[Error: ${err instanceof Error ? err.message : "Unknown error"}]`)
+    await _tryRecover(agentId, newConversationId, assistantMessageId, s.pendingContent ?? "")
   } finally {
     const s = useChatStore.getState()
 
     if (s.pendingContent) {
       s.addMessage({
-        id: crypto.randomUUID(),
+        id: assistantMessageId ?? crypto.randomUUID(),
         conversation_id: newConversationId ?? "",
         role: "assistant",
         content: s.pendingContent,
-        thinking_steps: s.thinkingSteps.length > 0 ? [...s.thinkingSteps] : undefined,
-        retrieval_results: s.retrievalResults.length > 0 ? [...s.retrievalResults] : undefined,
         created_at: new Date().toISOString(),
       })
     }

@@ -43,6 +43,9 @@ class KnowledgeBase(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("model_providers.id"), nullable=True
     )
     embedding_model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    embedding_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="SET NULL"), nullable=True
+    )
     chunking_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     retrieval_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -148,6 +151,7 @@ class Chunk(Base):
     vector_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_manually_edited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     edit_history: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

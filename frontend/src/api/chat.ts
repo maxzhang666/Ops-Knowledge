@@ -4,26 +4,31 @@ import type { PaginatedResponse } from "./types"
 export interface Conversation {
   id: string
   agent_id: string
-  title: string
+  title: string | null
+  user_id: string
   message_count: number
+  is_pinned: boolean
   created_at: string
   updated_at: string
 }
 
 export interface RetrievalChunk {
-  chunk_id: string
-  content: string
+  id: string
+  content_preview: string
   score: number
-  document_name: string
+  document_title: string
 }
 
 export interface Message {
   id: string
   conversation_id: string
-  role: "user" | "assistant"
+  role: "user" | "assistant" | "system"
   content: string
-  thinking_steps?: string[]
-  retrieval_results?: RetrievalChunk[]
+  status?: "generating" | "completed" | "error"
+  metadata?: Record<string, unknown> | null
+  token_usage?: Record<string, number> | null
+  trace_id?: string | null
+  feedback?: number | null
   created_at: string
 }
 
@@ -36,17 +41,27 @@ export const chatApi = {
     return api.post<Conversation>(`/agents/${agentId}/conversations`)
   },
 
-  getMessages(conversationId: string, params?: Record<string, string>) {
-    return api.get<PaginatedResponse<Message>>(`/conversations/${conversationId}/messages`, params)
+  getMessages(agentId: string, conversationId: string, params?: Record<string, string>) {
+    return api.get<Message[]>(`/agents/${agentId}/conversations/${conversationId}/messages`, params)
   },
 
-  deleteConversation(conversationId: string) {
-    return api.delete<void>(`/conversations/${conversationId}`)
+  getMessage(agentId: string, conversationId: string, messageId: string) {
+    return api.get<Message>(
+      `/agents/${agentId}/conversations/${conversationId}/messages/${messageId}`,
+    )
+  },
+
+  updateConversation(agentId: string, conversationId: string, data: { title?: string; is_pinned?: boolean }) {
+    return api.post<Conversation>(`/agents/${agentId}/conversations/${conversationId}/update`, data)
+  },
+
+  deleteConversation(agentId: string, conversationId: string) {
+    return api.post<void>(`/agents/${agentId}/conversations/${conversationId}/delete`)
   },
 }
 
 export interface SSEEvent {
-  event: "content" | "thinking" | "retrieval" | "done" | "error"
+  event: "message_start" | "thinking" | "content_delta" | "retrieval_info" | "message_end"
   data: string
 }
 

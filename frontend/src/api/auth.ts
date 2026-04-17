@@ -18,7 +18,7 @@ export function refresh(refreshToken: string) {
 }
 
 export function initStatus() {
-  return api.get<InitStatus>("/system/init-status")
+  return api.get<InitStatus>("/system/init/status")
 }
 
 export function initSystem(data: { username: string; email: string; password: string }) {

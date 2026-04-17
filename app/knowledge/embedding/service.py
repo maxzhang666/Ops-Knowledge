@@ -20,9 +20,10 @@ class EmbeddingService:
         self,
         chunks: list[dict],
         collection_name: str,
-        provider_id: uuid.UUID,
-        model_name: str,
+        provider_id: uuid.UUID | None = None,
+        model_name: str | None = None,
         batch_size: int = 64,
+        registry_id: uuid.UUID | None = None,
     ) -> list[str]:
         """Embed chunk texts in batches and insert into Milvus.
 
@@ -30,9 +31,10 @@ class EmbeddingService:
             chunks: list of dicts with keys: id, content, document_id,
                     folder_id, level, position, title, metadata
             collection_name: Milvus collection name
-            provider_id: embedding provider UUID
-            model_name: embedding model name
+            provider_id: embedding provider UUID (legacy)
+            model_name: embedding model name (legacy)
             batch_size: texts per embedding API call
+            registry_id: model registry UUID (preferred over provider_id+model_name)
 
         Returns:
             list of vector_ids (same as chunk ids) successfully stored
@@ -43,7 +45,10 @@ class EmbeddingService:
             batch = chunks[i : i + batch_size]
             texts = [c["content"] for c in batch]
 
-            vectors = await self.model_svc.embed(provider_id, model_name, texts)
+            if registry_id:
+                vectors = await self.model_svc.embed_by_registry(registry_id, texts)
+            else:
+                vectors = await self.model_svc.embed(provider_id, model_name, texts)
 
             rows = []
             for c, vec in zip(batch, vectors):

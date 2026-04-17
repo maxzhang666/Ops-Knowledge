@@ -14,18 +14,18 @@ PRESETS: dict[str, dict] = {
         "params": {"chunk_size": 800, "chunk_overlap": 0},
     },
     "book": {
-        "strategy": "markdown",
-        "secondary": "sentence",
+        "strategy": "composite",
+        "primary": "recursive",
         "params": {"chunk_size": 1000, "chunk_overlap": 100},
     },
     "technical": {
-        "strategy": "code",
-        "secondary": "recursive",
+        "strategy": "markdown",
+        "secondary": "code",
         "params": {"chunk_size": 600, "chunk_overlap": 50},
     },
     "paper": {
-        "strategy": "markdown",
-        "secondary": "recursive",
+        "strategy": "pdf_layout",
+        "secondary": "composite",
         "params": {"chunk_size": 800, "chunk_overlap": 80},
     },
     "custom": {
@@ -40,11 +40,22 @@ def get_strategy_for_preset(name: str) -> tuple[ChunkingStrategy, dict]:
     if preset is None:
         raise ValueError(f"Unknown preset: {name}")
 
-    primary = get_strategy(preset["strategy"])
     params = dict(preset["params"])
+    strategy_name = preset["strategy"]
+
+    if strategy_name == "composite" and "primary" in preset:
+        primary = get_strategy(preset["primary"])
+        secondary = get_strategy("recursive")
+        return CompositeStrategy(primary, secondary), params
+
+    primary = get_strategy(strategy_name)
 
     if "secondary" in preset:
-        secondary = get_strategy(preset["secondary"])
+        sec_name = preset["secondary"]
+        if sec_name == "composite":
+            secondary = CompositeStrategy(get_strategy("recursive"), get_strategy("sentence"))
+        else:
+            secondary = get_strategy(sec_name)
         return CompositeStrategy(primary, secondary), params
 
     return primary, params

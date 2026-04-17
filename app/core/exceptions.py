@@ -30,6 +30,11 @@ class ValidationError(AppError):
         super().__init__(message, status_code=422)
 
 
+class QuotaExceededError(AppError):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=429)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:

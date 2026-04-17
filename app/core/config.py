@@ -17,8 +17,15 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Active auth provider name; maps to AUTH_PROVIDERS registry key.
+    # "local" is the only built-in in Phase 1a; Phase 1b adds "oidc".
+    AUTH_PROVIDER: str = "local"
+
     # Milvus (default for local dev, production via SystemSettings UI)
     MILVUS_URI: str = "http://localhost:19530"
+
+    # CORS
+    CORS_ORIGINS: str = "http://localhost:5173"  # comma-separated origins
 
     # MinIO (default for local dev)
     MINIO_ENDPOINT: str = "localhost:9000"

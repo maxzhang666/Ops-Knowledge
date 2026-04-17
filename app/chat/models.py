@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, SmallInteger, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,9 @@ class Conversation(Base, UUIDMixin):
     )
     message_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
+    )
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
     )
     memory_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -27,6 +27,7 @@ class DepartmentResponse(BaseModel):
     description: str | None
     parent_department_id: uuid.UUID | None
     created_at: datetime
+    member_count: int = 0
 
     model_config = {"from_attributes": True}
 

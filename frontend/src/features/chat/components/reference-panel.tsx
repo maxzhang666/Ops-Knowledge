@@ -26,17 +26,17 @@ export function ReferencePanel({ open, onOpenChange, chunks, highlightIndex }: R
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {chunks.map((chunk, i) => (
             <div
-              key={chunk.chunk_id}
+              key={chunk.id}
               className={`rounded-lg border p-3 text-sm ${highlightIndex === i + 1 ? "border-primary bg-primary/5" : ""}`}
             >
               <div className="mb-2 flex items-center gap-2">
                 <Badge variant="secondary" className="text-[10px]">[{i + 1}]</Badge>
-                <span className="truncate font-medium">{chunk.document_name}</span>
+                <span className="truncate font-medium">{chunk.document_title}</span>
                 <span className="ml-auto text-xs text-muted-foreground">
                   {(chunk.score * 100).toFixed(1)}%
                 </span>
               </div>
-              <p className="line-clamp-4 text-muted-foreground">{chunk.content}</p>
+              <p className="line-clamp-4 text-muted-foreground">{chunk.content_preview}</p>
             </div>
           ))}
         </div>

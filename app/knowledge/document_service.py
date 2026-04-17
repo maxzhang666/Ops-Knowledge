@@ -5,11 +5,10 @@ import structlog
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, QuotaExceededError, ValidationError
 from app.knowledge.ingestion.parser import (
     compute_file_hash,
     detect_source_type,
-    parse_document,
     sanitize_filename,
 )
 from app.knowledge.models import Document, DocumentStatus
@@ -19,6 +18,7 @@ from app.system.models import SystemSettings
 logger = structlog.get_logger(__name__)
 
 MAX_DOCS_PER_KB = 500
+MAX_STORAGE_PER_KB_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 
 class DocumentService:
@@ -35,6 +35,7 @@ class DocumentService:
         user_id: uuid.UUID,
     ) -> Document:
         await self.check_doc_quota(kb_id)
+        await self.check_storage_quota(kb_id, len(file_data))
 
         safe_name = sanitize_filename(filename)
         source_type = detect_source_type(safe_name)
@@ -51,10 +52,7 @@ class DocumentService:
         if existing is not None:
             raise ConflictError(f"Duplicate file detected (matches document '{existing.title}')")
 
-        # Content pre-check
-        text = parse_document(file_data, safe_name)
-        if len(text.strip()) < 10:
-            raise ValidationError("Document content is too short or empty (< 10 characters after parsing)")
+        # Content validation deferred to Celery task (parse is expensive, don't block upload)
 
         # Upload to MinIO
         key = f"kb/{kb_id}/{uuid.uuid4()}/{safe_name}"
@@ -73,6 +71,7 @@ class DocumentService:
         )
         self.db.add(doc)
         await self.db.flush()
+        await self.db.refresh(doc)
 
         logger.info("document_uploaded", doc_id=str(doc.id), kb_id=str(kb_id), title=safe_name)
         return doc
@@ -139,4 +138,22 @@ class DocumentService:
             )
         )).scalar() or 0
         if count >= limit:
-            raise ValidationError(f"Document quota exceeded (max {limit} per knowledge base)")
+            raise QuotaExceededError(f"Document quota exceeded (max {limit} per knowledge base)")
+
+    async def check_storage_quota(self, kb_id: uuid.UUID, new_size: int) -> None:
+        limit = MAX_STORAGE_PER_KB_BYTES
+        ss = await self.db.get(SystemSettings, 1)
+        if ss and ss.settings:
+            limit = ss.settings.get("quotas", {}).get("max_storage_per_kb_bytes", MAX_STORAGE_PER_KB_BYTES)
+
+        used = (await self.db.execute(
+            select(func.coalesce(func.sum(Document.file_size), 0)).where(
+                Document.knowledge_base_id == kb_id,
+                Document.is_archived.is_(False),
+            )
+        )).scalar() or 0
+        if used + new_size > limit:
+            raise QuotaExceededError(
+                f"Storage quota exceeded "
+                f"(used {used / (1024 ** 3):.2f} GB, limit {limit / (1024 ** 3):.2f} GB)"
+            )

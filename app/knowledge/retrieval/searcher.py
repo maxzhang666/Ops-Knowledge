@@ -28,11 +28,16 @@ class SearchResult:
 def _normalize_scores(results: list[SearchResult]) -> list[SearchResult]:
     if not results:
         return results
+    min_score = min(r.score for r in results)
     max_score = max(r.score for r in results)
-    if max_score <= 0:
+    score_range = max_score - min_score
+    if score_range <= 0:
+        # All scores identical — normalize to 1.0
+        for r in results:
+            r.score = 1.0
         return results
     for r in results:
-        r.score = r.score / max_score
+        r.score = (r.score - min_score) / score_range
     return results
 
 
@@ -48,6 +53,13 @@ class HybridSearcher:
         top_k: int = 10,
         folder_ids: list[str] | None = None,
     ) -> list[SearchResult]:
+        # Pre-check: a KB that's never had a document processed has no Milvus
+        # collection yet. Hitting hybrid_search would raise "collection not
+        # found" (code 100). Treat as a valid "no index yet" state.
+        if not self._milvus.collection_exists(collection_name):
+            logger.debug("collection_not_yet_created", collection=collection_name)
+            return []
+
         filter_expr = ""
         if folder_ids:
             ids_str = ", ".join(f'"{fid}"' for fid in folder_ids)

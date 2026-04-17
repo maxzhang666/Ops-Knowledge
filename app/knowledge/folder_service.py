@@ -55,9 +55,19 @@ class FolderService:
         )
         all_folders = result.all()
 
+        # Construct nodes explicitly instead of model_validate(f) — the latter
+        # walks every attribute including the SQLAlchemy `children` relationship,
+        # which triggers lazy-load on an async session and raises MissingGreenlet.
         folder_map: dict[uuid.UUID, FolderTreeResponse] = {}
         for f in all_folders:
-            folder_map[f.id] = FolderTreeResponse.model_validate(f)
+            folder_map[f.id] = FolderTreeResponse(
+                id=f.id,
+                knowledge_base_id=f.knowledge_base_id,
+                name=f.name,
+                parent_folder_id=f.parent_folder_id,
+                position=f.position,
+                created_at=f.created_at,
+            )
 
         roots: list[FolderTreeResponse] = []
         for fr in folder_map.values():

@@ -1,7 +1,8 @@
+import io
 import uuid
 
 from fastapi import APIRouter, Depends, Query, UploadFile, status
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser, check_resource_access
@@ -27,8 +28,8 @@ async def export_kb(
 
     export_svc = ExportService(db)
     data = await export_svc.export_kb(kb_id)
-    return Response(
-        content=data,
+    return StreamingResponse(
+        io.BytesIO(data),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{kb.name}.oka"'},
     )

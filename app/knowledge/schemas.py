@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── KnowledgeBase ────────────────────────────────────────────────
@@ -11,6 +11,7 @@ class KBCreate(BaseModel):
     description: str | None = None
     embedding_provider_id: uuid.UUID | None = None
     embedding_model_name: str | None = None
+    embedding_model_id: uuid.UUID | None = None
     chunking_config: dict | None = None
     retrieval_config: dict | None = None
     share_to_dept: bool = True
@@ -21,6 +22,7 @@ class KBUpdate(BaseModel):
     description: str | None = None
     embedding_provider_id: uuid.UUID | None = None
     embedding_model_name: str | None = None
+    embedding_model_id: uuid.UUID | None = None
     chunking_config: dict | None = None
     retrieval_config: dict | None = None
 
@@ -31,6 +33,7 @@ class KBResponse(BaseModel):
     description: str | None
     embedding_provider_id: uuid.UUID | None
     embedding_model_name: str | None
+    embedding_model_id: uuid.UUID | None
     chunking_config: dict | None
     retrieval_config: dict | None
     document_count: int
@@ -58,10 +61,25 @@ class ChunkResponse(BaseModel):
     quality_score: float | None
     vector_id: str | None
     is_manually_edited: bool
+    hit_count: int = 0
     metadata: dict | None = Field(None, alias="metadata_")
     created_at: datetime
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+    @field_validator("quality_score", mode="before")
+    @classmethod
+    def _clamp_score(cls, v):
+        # Reject NaN/inf — return None so the UI can render a placeholder.
+        if v is None:
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        if f != f or f in (float("inf"), float("-inf")):
+            return None
+        return f
 
 
 # ── Folder ───────────────────────────────────────────────────────

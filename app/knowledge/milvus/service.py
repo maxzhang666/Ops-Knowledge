@@ -11,14 +11,20 @@ from pymilvus import (
 )
 
 from app.core.config import settings
+from app.core.runtime_config import resolve
 
 logger = structlog.get_logger(__name__)
 
 
 class MilvusService:
-    def __init__(self, uri: str | None = None):
-        self._uri = uri or settings.MILVUS_URI
-        self._client = MilvusClient(uri=self._uri)
+    def __init__(self, uri: str | None = None, runtime_cfg: dict | None = None):
+        cfg = runtime_cfg or {}
+        self._uri = uri or resolve(cfg, "milvus", "uri", settings.MILVUS_URI)
+        token = resolve(cfg, "milvus", "token", None)
+        kwargs: dict = {"uri": self._uri}
+        if token:
+            kwargs["token"] = token
+        self._client = MilvusClient(**kwargs)
 
     # ── Collection lifecycle ─────────────────────────────────────
 

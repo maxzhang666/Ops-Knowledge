@@ -22,17 +22,45 @@ class KBService:
 
     async def create_kb(self, data: KBCreate, user_id: uuid.UUID) -> KnowledgeBase:
         await self.check_kb_quota(user_id)
+
+        provider_id = data.embedding_provider_id
+        model_name = data.embedding_model_name
+        registry_id = data.embedding_model_id
+
+        # Fallback chain for embedding config:
+        #   1) explicit registry_id from payload → backfill provider/name from it
+        #   2) no payload → use system default_embedding_model_id
+        #   3) still nothing → leave NULL (KB shows "未配置", retrieval/upload blocked)
+        from app.model.models import ModelRegistryEntry
+
+        if not registry_id and not (provider_id and model_name):
+            ss = await self.db.get(SystemSettings, 1)
+            default_id = (ss.settings or {}).get("default_embedding_model_id") if ss else None
+            if default_id:
+                try:
+                    registry_id = uuid.UUID(str(default_id))
+                except (ValueError, TypeError):
+                    registry_id = None
+
+        if registry_id and (not provider_id or not model_name):
+            entry = await self.db.get(ModelRegistryEntry, registry_id)
+            if entry is not None:
+                provider_id = provider_id or entry.provider_id
+                model_name = model_name or entry.model_id
+
         kb = KnowledgeBase(
             name=data.name,
             description=data.description,
-            embedding_provider_id=data.embedding_provider_id,
-            embedding_model_name=data.embedding_model_name,
+            embedding_provider_id=provider_id,
+            embedding_model_name=model_name,
+            embedding_model_id=registry_id,
             chunking_config=data.chunking_config,
             retrieval_config=data.retrieval_config,
             created_by=user_id,
         )
         self.db.add(kb)
         await self.db.flush()
+        await self.db.refresh(kb)  # load server-generated created_at/updated_at/counts
 
         if data.share_to_dept:
             dept_svc = DepartmentService(self.db)
@@ -50,13 +78,16 @@ class KBService:
         return kb
 
     async def list_kbs(
-        self, user_id: uuid.UUID, accessible_ids: list[uuid.UUID], offset: int = 0, limit: int = 20
+        self, user_id: uuid.UUID, accessible_ids: list[uuid.UUID] | None, offset: int = 0, limit: int = 20
     ) -> tuple[list[KnowledgeBase], int]:
         base = select(KnowledgeBase).where(KnowledgeBase.status != KBStatus.DELETING)
-        stmt = apply_dept_scope(
-            base, accessible_ids, user_id,
-            KnowledgeBase.id, KnowledgeBase.created_by,
-        )
+        if accessible_ids is not None:
+            stmt = apply_dept_scope(
+                base, accessible_ids, user_id,
+                KnowledgeBase.id, KnowledgeBase.created_by,
+            )
+        else:
+            stmt = base
 
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_stmt)).scalar() or 0
@@ -66,12 +97,26 @@ class KBService:
         )
         return list(rows.all()), total
 
-    async def update_kb(self, kb_id: uuid.UUID, data: KBUpdate) -> KnowledgeBase:
+    async def update_kb(self, kb_id: uuid.UUID, data: KBUpdate, if_unmodified_since=None) -> KnowledgeBase:
         kb = await self.get_kb(kb_id)
+        if if_unmodified_since and kb.updated_at != if_unmodified_since:
+            raise ConflictError("Knowledge base has been modified by another user")
         updates = data.model_dump(exclude_unset=True)
+
+        # When caller sets embedding_model_id (registry FK), backfill the
+        # legacy embedding_provider_id / embedding_model_name fields from the
+        # registry so the UI + old code paths continue to read a name.
+        if "embedding_model_id" in updates and updates["embedding_model_id"]:
+            from app.model.models import ModelRegistryEntry
+            entry = await self.db.get(ModelRegistryEntry, updates["embedding_model_id"])
+            if entry is not None:
+                updates.setdefault("embedding_provider_id", entry.provider_id)
+                updates.setdefault("embedding_model_name", entry.model_id)
+
         for k, v in updates.items():
             setattr(kb, k, v)
         await self.db.flush()
+        await self.db.refresh(kb)  # load server-updated updated_at
         return kb
 
     async def mark_kb_deleting(self, kb_id: uuid.UUID) -> None:
