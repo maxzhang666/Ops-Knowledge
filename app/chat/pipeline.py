@@ -43,6 +43,41 @@ async def run_rag_pipeline(
     conversation_id: uuid.UUID | None,
     user_id: uuid.UUID,
 ) -> AsyncGenerator[tuple[str, dict | str], None]:
+    """Public entry: wrap the RAG pipeline with a Langfuse trace (no-op when
+    Langfuse is unconfigured) then delegate to the inner generator.
+
+    Plan 23 Task 2: Simple Agent chat trace. Keeps the inner function intact
+    so all existing callers / tests continue to work; observability is added
+    as a thin boundary layer."""
+    from app.core.observability import capture_io_enabled, get_client
+
+    trace = get_client().trace(
+        name="agent.chat",
+        user_id=str(user_id) if user_id else None,
+        metadata={"agent_id": str(agent.id), "agent_type": agent.agent_type},
+        input=query if capture_io_enabled() else None,
+    )
+    try:
+        async for ev in _run_rag_pipeline_inner(
+            agent=agent, query=query,
+            conversation_id=conversation_id, user_id=user_id,
+        ):
+            yield ev
+    finally:
+        try:
+            trace.update(
+                output={"status": "done"} if capture_io_enabled() else None,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _run_rag_pipeline_inner(
+    agent: Agent,
+    query: str,
+    conversation_id: uuid.UUID | None,
+    user_id: uuid.UUID,
+) -> AsyncGenerator[tuple[str, dict | str], None]:
     """Execute the RAG pipeline, yielding SSE event tuples.
 
     CRITICAL: This generator manages its own DB session because

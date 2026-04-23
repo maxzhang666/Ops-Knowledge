@@ -104,6 +104,30 @@ class DepartmentService:
         await self.db.flush()
         return member
 
+    async def ensure_user_membership(
+        self,
+        user_id: uuid.UUID,
+        dept_name: str,
+    ) -> UserDepartment:
+        """Idempotent: look up department by name (create with default
+        VIEWER role if missing), ensure the user is a member. Used by SSO
+        auto-provisioning — IdP provides a group name, we materialize it."""
+        dept = (await self.db.execute(
+            select(Department).where(Department.name == dept_name)
+        )).scalar_one_or_none()
+        if dept is None:
+            dept = await self.create_department(DepartmentCreate(name=dept_name))
+
+        existing = (await self.db.execute(
+            select(UserDepartment).where(
+                UserDepartment.department_id == dept.id,
+                UserDepartment.user_id == user_id,
+            )
+        )).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        return await self.add_member(dept.id, user_id, role=DepartmentRole.VIEWER)
+
     async def remove_member(self, dept_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await self.db.execute(
             delete(UserDepartment).where(

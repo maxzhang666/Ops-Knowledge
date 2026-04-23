@@ -52,6 +52,15 @@ slowapi==0.1.9
 # File type detection
 python-magic>=0.4.27
 
+# Workflow engine — LangGraph
+# Precise version pin; upgrades done manually (see docs/superpowers/plans/2026-04-21-phase1b-plan29-langgraph-migration.md §Dependencies)
+langgraph==1.1.0
+langgraph-checkpoint-postgres>=2.0.0,<3.0.0
+# langgraph-checkpoint-postgres uses psycopg3 for its PG driver. The [binary]
+# extra ships a wheel with a bundled libpq so we don't need libpq-dev on the
+# host. (Our business code keeps using asyncpg via SQLAlchemy.)
+psycopg[binary]>=3.2.0
+
 # Testing
 pytest==8.3.5
 pytest-asyncio==0.26.0

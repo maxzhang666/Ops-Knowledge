@@ -241,6 +241,23 @@ def reindex_kb(self, kb_id: str) -> dict:
             session.commit()
 
         logger.info("reindex_kb_done", kb_id=kb_id, count=len(vector_ids))
+
+        # Cross-domain event — governance / Langfuse can listen.
+        import asyncio
+        try:
+            from app.integration.event_bus import publish
+            from app.integration.events import Event
+
+            async def _emit():
+                await publish(Event(
+                    name="kb.reindex_completed",
+                    source="knowledge",
+                    data={"kb_id": str(kb_id), "chunk_count": len(vector_ids)},
+                ))
+            asyncio.run(_emit())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("reindex_event_emit_failed", kb_id=kb_id, error=str(e))
+
         return {"status": "completed", "kb_id": kb_id, "reindexed": len(vector_ids)}
 
     except Exception as exc:

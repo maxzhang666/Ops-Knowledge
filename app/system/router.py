@@ -172,12 +172,43 @@ async def get_settings(
     return row.settings if row else {}
 
 
+@router.get("/observability")
+async def observability_status(current_user: CurrentUser):
+    """Langfuse bootstrap state — env-based per spec 05, not runtime-configurable.
+    We echo host + whether keys are set; never the secret value itself."""
+    import os
+    host = os.getenv("LANGFUSE_HOST") or None
+    pub = bool(os.getenv("LANGFUSE_PUBLIC_KEY"))
+    sec = bool(os.getenv("LANGFUSE_SECRET_KEY"))
+    capture_io = os.getenv("LANGFUSE_CAPTURE_IO", "false").lower() == "true"
+    return {
+        "langfuse": {
+            "configured": bool(host and pub and sec),
+            "host": host,
+            "has_public_key": pub,
+            "has_secret_key": sec,
+            "capture_io": capture_io,
+        },
+    }
+
+
 @router.post("/settings/update")
 async def update_settings(
     body: dict,
     _user: User = require_role(UserRole.SYSTEM_ADMIN),
     db: AsyncSession = Depends(get_db),
 ):
+    # Per-section validation for the well-defined keys — unknown keys (new
+    # features) are still accepted so we don't block forward-compat writes.
+    if "sso" in body and body["sso"] is not None:
+        from app.system.schemas import SsoSettings
+        try:
+            body["sso"] = SsoSettings.model_validate(body["sso"]).model_dump(
+                exclude_defaults=False,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid sso config: {e}")
+
     from app.system.models import SystemSettings
     row = await db.get(SystemSettings, 1)
     if not row:

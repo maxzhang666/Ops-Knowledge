@@ -87,6 +87,35 @@ def _is_permanent_error(exc: Exception) -> bool:
     return any(keyword in err_str for keyword in PERMANENT_ERRORS)
 
 
+def _emit_doc_event(
+    name: str, doc_id, kb_id, status: str, error: str | None = None,
+) -> None:
+    """Celery tasks are sync; the event bus is async. Bridge via asyncio.run
+    in a fresh loop to avoid contaminating the task's own state. Swallow any
+    failure (Redis down etc.) — events are observation, never transactional.
+    """
+    import asyncio
+    try:
+        from app.integration.event_bus import publish
+        from app.integration.events import Event
+
+        async def _do():
+            await publish(Event(
+                name=name,  # type: ignore[arg-type]
+                source="knowledge",
+                data={
+                    "document_id": str(doc_id),
+                    "kb_id": str(kb_id),
+                    "status": status,
+                    **({"error": error} if error else {}),
+                },
+            ))
+
+        asyncio.run(_do())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("doc_event_emit_failed", name=name, doc_id=str(doc_id), error=str(e))
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -226,6 +255,11 @@ def process_document(self, doc_id: str) -> dict:
                 _create_notification(session, doc_user_id, doc_title, True, doc_id, kb_id)
                 session.commit()
 
+                # Cross-domain event — Langfuse / governance consumers listen
+                # on the integration bus. Best-effort; swallow Redis failures
+                # so the commit above stays authoritative.
+                _emit_doc_event("document.completed", doc_id, kb_id, "COMPLETED")
+
                 # Dispatch embedding task
                 if kb and (kb.embedding_model_id or (kb.embedding_provider_id and kb.embedding_model_name)):
                     embed_document_chunks.delay(doc_id, kb_id)
@@ -259,6 +293,8 @@ def process_document(self, doc_id: str) -> dict:
                 )
                 _create_notification(session, doc_user_id, doc_title, False, doc_id, kb_id)
                 session.commit()
+
+                _emit_doc_event("document.failed", doc_id, kb_id, "ERROR", error=err_msg)
 
                 if _is_permanent_error(exc):
                     logger.warning("permanent_error_no_retry", doc_id=doc_id, error=err_msg)

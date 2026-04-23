@@ -153,6 +153,11 @@ class ModelService:
         if provider is None:
             raise ValueError("Provider not found")
 
+        # 内部字段，不应下传到 provider SDK（openai/litellm 不识别会抛
+        # `unexpected keyword argument 'trace_id'`）。
+        trace_id = kwargs.pop("trace_id", None)
+        user_id = kwargs.pop("user_id", None)
+
         impl = get_provider_impl(provider.type)
         response = await impl.chat(
             model=model_name,
@@ -176,8 +181,8 @@ class ModelService:
             input_tokens=in_tok,
             output_tokens=out_tok,
             cost=cost,
-            trace_id=kwargs.get("trace_id"),
-            user_id=kwargs.get("user_id"),
+            trace_id=trace_id,
+            user_id=user_id,
         )
         return response
 
@@ -192,6 +197,9 @@ class ModelService:
         if provider is None:
             raise ValueError("Provider not found")
         impl = get_provider_impl(provider.type)
+
+        trace_id = kwargs.pop("trace_id", None)
+        user_id = kwargs.pop("user_id", None)
 
         logger.info(
             "llm_stream_start",
@@ -238,8 +246,8 @@ class ModelService:
             input_tokens=in_tok,
             output_tokens=out_tok,
             cost=self._safe_cost(model_name, in_tok, out_tok),
-            trace_id=kwargs.get("trace_id"),
-            user_id=kwargs.get("user_id"),
+            trace_id=trace_id,
+            user_id=user_id,
         )
 
     async def embed(
@@ -530,6 +538,8 @@ class ModelService:
     ) -> dict:
         provider, model_id = await self.resolve_model(registry_id)
         impl = get_provider_impl(provider.type)
+        trace_id = kwargs.pop("trace_id", None)
+        user_id = kwargs.pop("user_id", None)
         response = await impl.chat(
             model=model_id,
             messages=messages,
@@ -549,8 +559,8 @@ class ModelService:
             input_tokens=in_tok,
             output_tokens=out_tok,
             cost=self._safe_cost(model_id, in_tok, out_tok),
-            trace_id=kwargs.get("trace_id"),
-            user_id=kwargs.get("user_id"),
+            trace_id=trace_id,
+            user_id=user_id,
         )
         return response
 
@@ -559,6 +569,8 @@ class ModelService:
     ) -> AsyncGenerator[dict, None]:
         provider, model_id = await self.resolve_model(registry_id)
         impl = get_provider_impl(provider.type)
+        trace_id = kwargs.pop("trace_id", None)
+        user_id = kwargs.pop("user_id", None)
 
         logger.info(
             "llm_stream_start",
@@ -604,8 +616,8 @@ class ModelService:
             input_tokens=in_tok,
             output_tokens=out_tok,
             cost=self._safe_cost(model_id, in_tok, out_tok),
-            trace_id=kwargs.get("trace_id"),
-            user_id=kwargs.get("user_id"),
+            trace_id=trace_id,
+            user_id=user_id,
         )
 
     async def embed_by_registry(

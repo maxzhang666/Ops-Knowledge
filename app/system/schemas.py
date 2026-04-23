@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ApiKeyCreate(BaseModel):
@@ -48,3 +48,24 @@ class QuotaConfig(BaseModel):
     max_kbs_per_user: int = 20
     max_docs_per_kb: int = 500
     max_storage_per_kb_mb: int = 2048
+
+
+class SsoSettings(BaseModel):
+    """OIDC SSO provider config — stored in SystemSettings.settings['sso'].
+
+    Admin UI writes via POST /system/settings/update; OIDCAuthProvider reads
+    via get_runtime_config. Secrets are stored as-is (plaintext) for the
+    private-deployment model; refresh if you move to multi-tenant.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    issuer: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    redirect_uri: str | None = None
+    scopes: str = "openid profile email"
+    group_claim: str = "groups"
+    role_map: dict[str, str] = Field(default_factory=dict)
+    dept_map: dict[str, str] = Field(default_factory=dict)
+    button_label: str = "使用 SSO 登录"
