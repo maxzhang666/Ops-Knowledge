@@ -18,6 +18,7 @@ from app.mcp.schemas import (
     MCPServerResponse,
     MCPServerUpdate,
     MCPTool,
+    MCPToolCallResponse,
     TestConnectionResult,
 )
 from app.mcp.service import MCPServerService
@@ -126,3 +127,19 @@ async def get_tools(
         raise HTTPException(status_code=e.status_code, detail=e.message)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ── Audit log (Plan 30 M3.1) ────────────────────────────────────
+
+
+@router.get("/tool-calls", response_model=list[MCPToolCallResponse])
+async def list_tool_calls(
+    _admin: User = require_role(UserRole.SYSTEM_ADMIN),
+    server_id: uuid.UUID | None = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent MCP tool invocations (admin-only). Filter by server_id to
+    narrow to a specific integration. Default limit 50, max 500."""
+    svc = MCPServerService(db)
+    return await svc.list_tool_calls(server_id=server_id, limit=limit)

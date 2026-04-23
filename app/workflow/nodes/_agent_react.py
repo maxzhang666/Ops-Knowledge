@@ -24,6 +24,7 @@ from sqlalchemy import select
 
 from app.agent.tools import ToolContext, build_builtin_tools
 from app.core.database import async_session
+from app.mcp.audit import CallContext, use_call_context
 from app.mcp.models import MCPServer
 from app.model.service import ModelService
 from app.workflow.nodes.base import (
@@ -128,22 +129,32 @@ class AgentReactNode(AbstractNode):
         builtin_tools = build_builtin_tools(tool_ctx, enabled=builtin_names)
 
         # MCP client config — empty dict disables MCP without a pointless session
-        mcp_cfg = await _build_mcp_client_config(mcp_ids)
+        mcp_cfg, first_server_id = await _build_mcp_client_config(mcp_ids)
         mcp_tools: list = []
-        if mcp_cfg:
-            async with MultiServerMCPClient(mcp_cfg) as mc:
-                mcp_tools = await mc.get_tools()
+        # Audit context — attribution for any tool call made during this agent
+        # turn. Multi-server case: we record against the first server; M3 trades
+        # per-call server attribution for a simpler CallContext. Improve only if
+        # admin query patterns actually demand it.
+        audit_ctx = CallContext(
+            server_id=first_server_id,
+            agent_id=None,  # Workflow node doesn't carry the owning Agent id yet
+            trace_id=ctx.trace_id,
+        )
+        async with use_call_context(audit_ctx):
+            if mcp_cfg:
+                async with MultiServerMCPClient(mcp_cfg) as mc:
+                    mcp_tools = await mc.get_tools()
+                    result = await _run_agent(
+                        llm, builtin_tools + mcp_tools,
+                        system_prompt, query,
+                        ctx.config.get("max_iterations", 8),
+                    )
+            else:
                 result = await _run_agent(
-                    llm, builtin_tools + mcp_tools,
+                    llm, builtin_tools,
                     system_prompt, query,
                     ctx.config.get("max_iterations", 8),
                 )
-        else:
-            result = await _run_agent(
-                llm, builtin_tools,
-                system_prompt, query,
-                ctx.config.get("max_iterations", 8),
-            )
 
         final_msg = result["messages"][-1] if result.get("messages") else None
         content = getattr(final_msg, "content", "") if final_msg else ""
@@ -172,14 +183,18 @@ async def _run_agent(llm, tools, system_prompt, query, max_iter):
     )
 
 
-async def _build_mcp_client_config(server_ids: list[str]) -> dict:
+async def _build_mcp_client_config(
+    server_ids: list[str],
+) -> tuple[dict, uuid.UUID | None]:
     """Fetch server rows and project into the ``MultiServerMCPClient`` shape.
 
-    Empty / all-invalid input returns {} so the caller can shortcut the
-    MCP session entirely.
+    Empty / all-invalid input returns ({}, None) so the caller can shortcut
+    the MCP session entirely. Second tuple element is the first server's id,
+    used as the audit ``server_id`` attribution fallback when a node binds
+    multiple servers.
     """
     if not server_ids:
-        return {}
+        return {}, None
     ids = [uuid.UUID(str(s)) for s in server_ids]
     async with async_session() as db:
         rows = (await db.execute(
@@ -187,6 +202,7 @@ async def _build_mcp_client_config(server_ids: list[str]) -> dict:
         )).scalars().all()
 
     cfg: dict[str, dict] = {}
+    first_id: uuid.UUID | None = None
     for s in rows:
         entry = _server_to_mcp_client_entry(s)
         if entry is None:
@@ -197,7 +213,9 @@ async def _build_mcp_client_config(server_ids: list[str]) -> dict:
         if key in cfg:
             key = f"{key}-{s.id}"
         cfg[key] = entry
-    return cfg
+        if first_id is None:
+            first_id = s.id
+    return cfg, first_id
 
 
 def _server_to_mcp_client_entry(s: MCPServer) -> dict | None:

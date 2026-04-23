@@ -51,6 +51,6 @@ class StreamableHTTPTransport(MCPTransport):
         result = await self._session.list_tools()
         return [tool_from_mcp(t) for t in result.tools]
 
-    async def call_tool(self, name: str, arguments: dict | None = None) -> Any:
+    async def _do_call_tool(self, name: str, arguments: dict | None) -> Any:
         assert self._session
         return await self._session.call_tool(name, arguments=arguments or {})

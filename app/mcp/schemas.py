@@ -126,3 +126,21 @@ class TestConnectionResult(BaseModel):
     ok: bool
     detail: str
     server_info: dict | None = None
+
+
+class MCPToolCallResponse(BaseModel):
+    id: uuid.UUID
+    mcp_server_id: uuid.UUID | None
+    tool_name: str
+    args: dict | None
+    result: dict | None
+    status: str
+    error: str | None
+    latency_ms: int | None
+    agent_id: uuid.UUID | None
+    user_id: uuid.UUID | None
+    conversation_id: uuid.UUID | None
+    trace_id: str | None
+    called_at: datetime
+
+    model_config = {"from_attributes": True}

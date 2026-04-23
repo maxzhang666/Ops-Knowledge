@@ -33,10 +33,14 @@ celery_app.conf.update(
             "task": "app.workflow.tasks.cleanup_old_executions",
             "schedule": 3600.0,  # 1 hour; retention itself is days-scale
         },
+        "mcp-health-check": {
+            "task": "app.mcp.tasks.mcp_health_check",
+            "schedule": 300.0,  # 5 min; fast enough to catch offline servers
+        },
     },
 )
 celery_app.autodiscover_tasks(
-    ["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system", "app.workflow"],
+    ["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system", "app.workflow", "app.mcp"],
 )
 
 
