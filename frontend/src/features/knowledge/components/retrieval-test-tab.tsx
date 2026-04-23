@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Search, Send, Square } from "lucide-react"
 import { MarkdownRender } from "@douyinfe/semi-ui"
+import { markdownCodeBlockComponents } from "@/components/shared/markdown-code-block"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -297,7 +298,7 @@ function QAPane({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean }) {
 
       {(answer || streaming) && (
         <div className="prose prose-sm max-w-none rounded-lg border p-4 dark:prose-invert">
-          <MarkdownRender raw={answer || "..."} format="md" />
+          <MarkdownRender raw={answer || "..."} format="md" components={markdownCodeBlockComponents} />
           {streaming && (
             <span className="ml-1 inline-block h-3 w-1 animate-pulse bg-foreground" />
           )}

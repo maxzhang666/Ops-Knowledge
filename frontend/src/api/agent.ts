@@ -20,6 +20,7 @@ export interface Agent {
   system_prompt: string | null
   retrieval_config: Record<string, unknown> | null
   welcome_message: string | null
+  suggested_questions: string[] | null
   show_thinking: boolean
   thinking_detail: string | null
   no_result_mode: string | null
@@ -43,10 +44,12 @@ interface CreateAgentPayload {
   system_prompt?: string
   retrieval_config?: Record<string, unknown>
   welcome_message?: string
+  suggested_questions?: string[]
   show_thinking?: boolean
   thinking_detail?: string
   no_result_mode?: string
   share_to_dept?: boolean
+  workflow_id?: string  // required when agent_type === "workflow"
 }
 
 interface UpdateAgentPayload {
@@ -63,6 +66,7 @@ interface UpdateAgentPayload {
   system_prompt?: string
   retrieval_config?: Record<string, unknown> | null
   welcome_message?: string
+  suggested_questions?: string[] | null
   show_thinking?: boolean
   thinking_detail?: string | null
   no_result_mode?: string | null

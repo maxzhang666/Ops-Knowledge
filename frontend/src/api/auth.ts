@@ -24,3 +24,7 @@ export function initStatus() {
 export function initSystem(data: { username: string; email: string; password: string }) {
   return api.post<User>("/system/init", data)
 }
+
+export function getSsoConfig() {
+  return api.get<{ enabled: boolean; button_label?: string }>("/auth/sso/config")
+}

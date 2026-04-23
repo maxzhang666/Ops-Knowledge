@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useUiStore } from "@/stores/ui"
 
+// Spec 12 §Phase 1b: "No separate Workflow navigation — accessed through Agent".
+// Workflow Agents create + edit their workflow entirely inside the Agent
+// Workbench, so the top-level nav stays knowledge / agents / settings.
 const navItems = [
   { to: "/knowledge", icon: BookOpen, label: "知识库" },
   { to: "/agents", icon: Bot, label: "智能体" },

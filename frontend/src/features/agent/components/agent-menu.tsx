@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  GitBranch,
   Radio,
   Sparkles,
   User,
@@ -40,6 +41,7 @@ export const AGENT_MENU_GROUPS: MenuGroup[] = [
     items: [
       { id: "persona", label: "人设", icon: User, description: "角色身份、模型、欢迎语、思维链" },
       { id: "knowledge", label: "知识库", icon: Database, description: "KB 关联与检索配置" },
+      { id: "workflow", label: "工作流", icon: GitBranch, description: "可视化编辑工作流（仅工作流智能体）" },
     ],
   },
   {
@@ -55,7 +57,7 @@ export const AGENT_MENU_GROUPS: MenuGroup[] = [
     id: "publish",
     label: "发布运营",
     items: [
-      { id: "channels", label: "渠道", icon: Radio, phase: "1b", description: "Webhook / Embed 组件 / API Key" },
+      { id: "channels", label: "渠道", icon: Radio, description: "API 调用（4 模式）+ API Key 快捷入口；Embed / Outbound Webhook 见 Phase 2" },
       { id: "stats", label: "统计", icon: BarChart3, phase: "2", description: "对话量、反馈率、使用趋势" },
     ],
   },
@@ -63,17 +65,41 @@ export const AGENT_MENU_GROUPS: MenuGroup[] = [
 
 export const DEFAULT_MENU = "persona"
 
+
+/**
+ * Filter menu items by agent_type. Simple agents hide "workflow";
+ * Workflow agents hide "persona" / "knowledge" (workflow IS their config).
+ * Both keep capabilities + publish groups.
+ */
+export function menuGroupsForAgent(agentType: string): MenuGroup[] {
+  return AGENT_MENU_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((item) => {
+      if (agentType === "workflow") {
+        return item.id !== "persona" && item.id !== "knowledge"
+      }
+      return item.id !== "workflow"
+    }),
+  })).filter((g) => g.items.length > 0)
+}
+
+
+export function defaultMenuFor(agentType: string): string {
+  return agentType === "workflow" ? "workflow" : DEFAULT_MENU
+}
+
 interface AgentMenuProps {
   activeMenu: string
   onSelect: (menu: string) => void
   collapsed: boolean
   onToggleCollapse: () => void
+  agentType?: string
 }
 
 export function AgentMenu({
-  activeMenu, onSelect, collapsed, onToggleCollapse,
+  activeMenu, onSelect, collapsed, onToggleCollapse, agentType = "simple",
 }: AgentMenuProps) {
-  const groups = useMemo(() => AGENT_MENU_GROUPS, [])
+  const groups = useMemo(() => menuGroupsForAgent(agentType), [agentType])
 
   return (
     <div

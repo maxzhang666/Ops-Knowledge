@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 import {
   Dialog,
   DialogContent,
@@ -18,7 +19,7 @@ import { cn } from "@/lib/utils"
 
 const agentTypeOptions: { value: AgentType; label: string; disabled: boolean; badge?: string }[] = [
   { value: "simple", label: "简易智能体", disabled: false },
-  { value: "workflow", label: "工作流智能体", disabled: true, badge: "Phase 1b" },
+  { value: "workflow", label: "工作流智能体", disabled: false },
   { value: "orchestrator", label: "编排智能体", disabled: true, badge: "Phase 2" },
 ]
 
@@ -47,6 +48,10 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
 
     setLoading(true)
     try {
+      // Per spec 12 / 22: creating a Workflow Agent auto-provisions its
+      // workflow server-side; UI doesn't need to prompt for an existing
+      // workflow_id. The agent lands straight into the Workbench where the
+      // embedded editor opens on the auto-created draft.
       const agent = await agentApi.create({
         name: name.trim(),
         description: description.trim() || undefined,
@@ -55,9 +60,9 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
       reset()
       onOpenChange(false)
       onCreated()
-      // Agent Workbench uses ?menu=xxx (not ?tab=). Default menu is "persona"
-      // which is exactly where a freshly-created agent should land.
       navigate(`/agents/${agent.id}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "创建失败")
     } finally {
       setLoading(false)
     }
@@ -124,6 +129,12 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
               ))}
             </div>
           </div>
+
+          {agentType === "workflow" && (
+            <p className="rounded-md border border-dashed bg-muted/30 p-2 text-xs text-muted-foreground">
+              将自动为该智能体创建一个空白工作流草稿，创建后可在智能体页面内直接编辑。
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
               取消

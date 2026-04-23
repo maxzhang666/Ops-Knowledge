@@ -1,21 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { MessageBubble } from "./message-bubble"
-import { ThinkingBlock } from "./thinking-block"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Chat, AIChatInput } from "@douyinfe/semi-ui"
+import type { Message as SemiMessage } from "@douyinfe/semi-ui/lib/es/chat/interface"
+import { Bot } from "lucide-react"
+
+// AIChatInput.onMessageSend 的 inputContents 是 TipTap JSON 节点；只取 text。
+interface TiptapContent {
+  type: string
+  text?: string
+  content?: TiptapContent[]
+  [key: string]: unknown
+}
 import { ReferencePanel } from "./reference-panel"
-import { ChatInput } from "./chat-input"
 import { sendMessage, abortStream } from "./sse-handler"
 import { useChatStore } from "@/stores/chat"
-import { chatApi } from "@/api/chat"
-import { Bot } from "lucide-react"
+import { chatApi, type Message as ApiMessage } from "@/api/chat"
+import { markdownCodeBlockComponents } from "@/components/shared/markdown-code-block"
 
 interface ChatWindowProps {
   agentId: string
   conversationId: string | null
   welcomeMessage?: string
+  /** 快捷提问：空会话时展示为可点击的 hint chips。 */
+  suggestedQuestions?: string[]
 }
 
-export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWindowProps) {
+/**
+ * Chat 窗口 — 基于 Semi `<Chat />`。
+ *
+ * Semi Chat 内置：
+ *  - 气泡渲染（MarkdownRender 自动集成）
+ *  - 消息操作（复制/点赞/点踩/重生成/删除）
+ *  - 滚动锚定 / 返回底部 / 输入热键
+ *  - 思维链 → 融合到 loading 态气泡（prefix 引用块）
+ *
+ * 我们仍然维护：
+ *  - Citation 跳转：`[N]` → <sup data-cite="N">，通过 customMarkDownComponents.sup
+ *    拦截 data-cite 属性直接挂 onClick，打开右侧 ReferencePanel
+ *  - AIChatInput 替代默认 textarea（附件/引用先关闭），onStopGenerate 绑 abortStream
+ *  - conversationId 加载历史（getMessages）
+ */
+export function ChatWindow({ agentId, conversationId, welcomeMessage, suggestedQuestions }: ChatWindowProps) {
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const pendingContent = useChatStore((s) => s.pendingContent)
@@ -25,7 +49,6 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWind
 
   const [refOpen, setRefOpen] = useState(false)
   const [refHighlight, setRefHighlight] = useState<number | undefined>()
-  const bottomRef = useRef<HTMLDivElement>(null)
 
   const loadMessages = useCallback(async () => {
     if (!conversationId) {
@@ -33,89 +56,159 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWind
       return
     }
     const res = await chatApi.getMessages(agentId, conversationId, { page_size: "100" })
-    const list = Array.isArray(res) ? res : (res as any).items ?? []
+    const list = Array.isArray(res) ? res : (res as { items?: ApiMessage[] }).items ?? []
     setMessages(list)
   }, [agentId, conversationId, setMessages])
 
-  // Load messages on conversationId change — but NOT during a live stream,
-  // because the SSE pipeline itself updates activeConversationId mid-flight
-  // (via message_start), and re-loading here would overwrite the streaming
-  // state. Skipping load while streaming keeps the ongoing session intact.
+  // 流式进行中不重载历史，避免覆盖流中状态
   useEffect(() => {
     if (isStreaming) return
     loadMessages()
   }, [loadMessages, isStreaming])
 
-  // Abort the stream only on unmount — NOT on conversationId change, which
-  // would terminate the stream that just updated conversationId itself.
   useEffect(() => {
     return () => { abortStream() }
   }, [])
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, pendingContent])
+  const chats: SemiMessage[] = useMemo(() => {
+    const out: SemiMessage[] = messages.map(toSemi)
+    if (isStreaming) {
+      const prefix = thinkingSteps.length > 0
+        ? `> 🧠 **思维链**（${thinkingSteps.length} 步）\n\n${thinkingSteps
+            .map((t) => `> - ${t.content}`)
+            .join("\n")}\n\n`
+        : ""
+      out.push({
+        id: "__streaming__",
+        role: "assistant",
+        content: prefix + injectCitations(pendingContent),
+        status: "loading",
+        createAt: Date.now(),
+      })
+    }
+    return out
+  }, [messages, isStreaming, pendingContent, thinkingSteps])
+
+  const roleConfig = useMemo(
+    () => ({
+      user: { name: "我" },
+      assistant: {
+        name: "助手",
+        avatar: <Bot className="size-5" />,
+      },
+      system: { name: "系统" },
+    }),
+    [],
+  )
 
   function handleSend(content: string) {
-    sendMessage(agentId, content, conversationId ?? undefined)
+    if (!content.trim()) return
+    sendMessage(agentId, content.trim(), conversationId ?? undefined)
   }
 
-  function handleCitation(index: number) {
-    setRefHighlight(index)
-    setRefOpen(true)
+  function handleStop() {
+    abortStream()
   }
 
+  /** 重试：找到失败气泡前一条 user 消息，重新发送一次。 */
+  function handleReset(msg?: SemiMessage) {
+    if (!msg || msg.role !== "assistant") return
+    const idx = chats.findIndex((c) => c.id === msg.id)
+    if (idx < 1) return
+    const prev = chats[idx - 1]
+    if (prev.role !== "user") return
+    const text =
+      typeof prev.content === "string"
+        ? prev.content
+        : Array.isArray(prev.content)
+          ? prev.content.map((c) => c.text ?? "").join("")
+          : ""
+    if (text.trim()) handleSend(text)
+  }
+
+  // customMarkDownComponents 叠加两项：
+  //  - sup：data-cite 属性拦截为可点击引用，其他（H<sup>2</sup>O）原样
+  //  - pre：代码块加 hover 复制按钮（来自公共组件）
+  const customMarkDownComponents = useMemo(() => ({
+    ...markdownCodeBlockComponents,
+    sup: (
+      props: React.HTMLAttributes<HTMLElement> & { "data-cite"?: string | number },
+    ) => {
+      const cite = props["data-cite"]
+      if (cite === undefined || cite === null || cite === "") {
+        return <sup {...props} />
+      }
+      const idx = Number(cite)
+      return (
+        <sup
+          className="citation-ref mx-0.5 cursor-pointer text-[10px] text-blue-600 hover:underline"
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            if (!Number.isNaN(idx)) {
+              setRefHighlight(idx)
+              setRefOpen(true)
+            }
+          }}
+        >
+          {props.children}
+        </sup>
+      )
+    },
+  }), [])
+
+  const showWelcome = !isStreaming && messages.length === 0 && !!welcomeMessage
   const activeRetrievalResults = isStreaming ? retrievalResults : []
+  // Hints 仅在空会话时展示；流式或已有对话不再打扰用户。
+  const activeHints =
+    !isStreaming && messages.length === 0
+      ? (suggestedQuestions ?? []).filter((q) => q.trim())
+      : []
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <ScrollArea className="min-h-0 flex-1 p-4">
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {messages.length === 0 && !isStreaming && welcomeMessage && (
-            <div className="flex flex-col items-center gap-3 py-12 text-center">
-              <Bot className="size-10 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{welcomeMessage}</p>
-            </div>
+      <div className="chat-root min-h-0 flex-1">
+        <Chat
+          chats={chats}
+          roleConfig={roleConfig}
+          align="leftRight"
+          mode="bubble"
+          escapeHtml={false}
+          showStopGenerate={false}
+          showClearContext={false}
+          onMessageSend={handleSend}
+          onMessageReset={handleReset}
+          customMarkDownComponents={customMarkDownComponents}
+          hints={activeHints.length > 0 ? activeHints : undefined}
+          onHintClick={handleSend}
+          topSlot={
+            showWelcome ? (
+              <div className="flex flex-col items-center gap-3 py-12 text-center">
+                <Bot className="size-10 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">{welcomeMessage}</p>
+              </div>
+            ) : null
+          }
+          // AIChatInput 取代默认 textarea；流式时显示 stop 按钮（generating=true）。
+          // 通过 onMessageSend → handleSend 触发发送，与 test-chat-drawer 保持一致。
+          renderInputArea={() => (
+            <AIChatInput
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              showUploadButton={false}
+              showUploadFile={false}
+              showReference={false}
+              canSend={!isStreaming}
+              generating={isStreaming}
+              keepSkillAfterSend={false}
+              onMessageSend={(msg) => {
+                const text = extractText(msg.inputContents)
+                if (text) handleSend(text)
+              }}
+              onStopGenerate={handleStop}
+            />
           )}
-
-          {messages.map((msg) => (
-            <div key={msg.id}>
-              <MessageBubble message={msg} onCitationClick={handleCitation} />
-            </div>
-          ))}
-
-          {isStreaming && (
-            <div>
-              {thinkingSteps.length > 0 && (
-                <ThinkingBlock steps={thinkingSteps.map((t) => t.content)} />
-              )}
-              {pendingContent && (
-                <div className="flex justify-start">
-                  <div className="max-w-[75%] rounded-2xl bg-muted px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
-                    {pendingContent}
-                    <span className="ml-1 inline-block h-4 w-1 animate-pulse bg-foreground" />
-                  </div>
-                </div>
-              )}
-              {!pendingContent && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl bg-muted px-4 py-2.5">
-                    <span className="flex gap-1">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground [animation-delay:0ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-      </ScrollArea>
-
-      <ChatInput onSend={handleSend} disabled={isStreaming} />
+        />
+      </div>
 
       <ReferencePanel
         open={refOpen}
@@ -125,4 +218,36 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage }: ChatWind
       />
     </div>
   )
+}
+
+
+/** 把 `[N]` 引用符号包进 <sup data-cite="N">；样式/点击由 customMarkDownComponents 接管。 */
+function injectCitations(content: string): string {
+  return content.replace(/\[(\d+)\]/g, (_, n) => `<sup data-cite="${n}">[${n}]</sup>`)
+}
+
+
+/** AIChatInput 的 inputContents 是 TipTap JSON；递归提取纯文本。 */
+function extractText(contents?: TiptapContent[]): string {
+  if (!contents || contents.length === 0) return ""
+  let out = ""
+  for (const c of contents) {
+    if (c.type === "text" && typeof c.text === "string") out += c.text
+    if (Array.isArray(c.content)) out += extractText(c.content)
+  }
+  return out.trim()
+}
+
+
+function toSemi(m: ApiMessage): SemiMessage {
+  return {
+    id: m.id,
+    role: m.role,
+    content: m.role === "assistant" ? injectCitations(m.content) : m.content,
+    status:
+      m.status === "generating" ? "loading"
+      : m.status === "error" ? "error"
+      : "complete",
+    createAt: new Date(m.created_at).getTime(),
+  }
 }

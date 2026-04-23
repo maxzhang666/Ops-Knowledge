@@ -67,6 +67,10 @@ export function PersonaPanel({ agent, onUpdated, onDeleted }: PersonaPanelProps)
   // Prompt
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt ?? "")
   const [welcomeMessage, setWelcomeMessage] = useState(agent.welcome_message ?? "")
+  // 快捷提问：textarea 里一行一条；保存前 split + trim，空行忽略。
+  const [suggestedQuestionsText, setSuggestedQuestionsText] = useState(
+    (agent.suggested_questions ?? []).join("\n"),
+  )
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<string>("")
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null)
@@ -120,10 +124,15 @@ export function PersonaPanel({ agent, onUpdated, onDeleted }: PersonaPanelProps)
   async function handleSave() {
     setLoading(true)
     try {
+      const suggestedQuestions = suggestedQuestionsText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
       await agentApi.update(agent.id, {
         model_id: modelId || undefined,
         system_prompt: systemPrompt,
         welcome_message: welcomeMessage,
+        suggested_questions: suggestedQuestions.length > 0 ? suggestedQuestions : null,
         show_thinking: showThinking,
         thinking_detail: thinkingDetail,
         share_to_dept: shareToDept,
@@ -320,6 +329,21 @@ export function PersonaPanel({ agent, onUpdated, onDeleted }: PersonaPanelProps)
             onChange={(e) => setWelcomeMessage(e.target.value)}
             placeholder="用户打开对话时的欢迎消息"
           />
+        </div>
+
+        {/* Suggested Questions — 空会话时以可点击 chip 形式出现 */}
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="suggested-questions">快捷提问</Label>
+          <Textarea
+            id="suggested-questions"
+            value={suggestedQuestionsText}
+            onChange={(e) => setSuggestedQuestionsText(e.target.value)}
+            placeholder={"一行一条，例如：\n怎么开始？\n支持哪些知识库？"}
+            rows={4}
+          />
+          <span className="text-xs text-muted-foreground">
+            一行一条。空会话时展示在输入框上方，点击直接发送。
+          </span>
         </div>
 
         {/* Thinking */}

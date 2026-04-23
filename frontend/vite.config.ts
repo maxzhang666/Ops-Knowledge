@@ -16,6 +16,10 @@ export default defineConfig({
       "/api": {
         target: "http://100.107.115.1:8200",
         changeOrigin: true,
+        // Upgrade WebSocket handshakes onto the backend. Without this, the
+        // browser's `ws://localhost:3000/api/.../events` request falls through
+        // to Vite's HTTP handler and hangs in "Pending" forever.
+        ws: true,
       },
     },
   },

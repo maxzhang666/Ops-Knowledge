@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { MarkdownRender } from "@douyinfe/semi-ui"
+import { markdownCodeBlockComponents } from "@/components/shared/markdown-code-block"
 
 import { LoadingSpinner } from "@/components/shared/loading-spinner"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -57,7 +58,7 @@ export function DocumentPreview({ kbId, docId, sourceType, title }: DocumentPrev
   if (sourceType === "markdown") {
     return (
       <div className="prose prose-sm max-w-none p-6 dark:prose-invert">
-        <MarkdownRender raw={content} format="md" />
+        <MarkdownRender raw={content} format="md" components={markdownCodeBlockComponents} />
       </div>
     )
   }
