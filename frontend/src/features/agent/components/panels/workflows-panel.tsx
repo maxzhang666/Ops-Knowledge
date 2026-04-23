@@ -50,6 +50,8 @@ export function WorkflowsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<WorkflowSummary | null>(null)
+  // Plan 31 N2.14 — 左侧 SOP 列表折叠状态（组件本地，和 URL fullscreen 独立）
+  const [listCollapsed, setListCollapsed] = useState(false)
 
   const [newName, setNewName] = useState("")
   const [newDesc, setNewDesc] = useState("")
