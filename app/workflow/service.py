@@ -10,6 +10,30 @@ from app.workflow.models import Workflow, WorkflowVersion
 from app.workflow.schemas import WorkflowCreate, WorkflowUpdate
 
 
+# Every Workflow must have a Start node — publish validation mandates it.
+# We seed it at create time so any API client (Workflow Agent auto-provision,
+# Orchestrator SOP list, direct REST call) gets a usable canvas. Authors add
+# / replace nodes from there.
+_DEFAULT_SEED_GRAPH = {
+    "dsl_version": "1.0",
+    "graph": {
+        "nodes": [
+            {"id": "start", "type": "start", "position": {"x": 80, "y": 120}, "data": {}},
+        ],
+        "edges": [],
+    },
+    "workflow_variables": [],
+}
+
+
+def _has_any_node(graph_data: dict | None) -> bool:
+    if not graph_data:
+        return False
+    graph = graph_data.get("graph") or {}
+    nodes = graph.get("nodes")
+    return isinstance(nodes, list) and len(nodes) > 0
+
+
 class WorkflowNotFound(Exception):
     pass
 
@@ -26,11 +50,17 @@ class WorkflowService:
     ) -> Workflow:
         # Shape-only validation — drafts can be structurally incomplete.
         parse_dsl_loose(data.graph_data)
+        # Every Workflow must have a Start node. If the client didn't supply
+        # any nodes, seed Start so the canvas is immediately editable and
+        # publish won't fail with "missing Start".
+        graph_data = data.graph_data
+        if not _has_any_node(graph_data):
+            graph_data = _DEFAULT_SEED_GRAPH
         wf = Workflow(
             name=data.name,
             description=data.description,
             trigger_type=data.trigger_type,
-            graph_data=data.graph_data or {},
+            graph_data=graph_data,
             owner_agent_id=owner_agent_id,
             created_by=user_id,
         )
