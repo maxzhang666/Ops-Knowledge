@@ -1,5 +1,15 @@
 import asyncio
+import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
+
+# alembic runs env.py in an isolated process; pyproject.toml's pytest
+# `pythonpath` doesn't apply here. Put the repo root on sys.path so that
+# the `app.*` imports below resolve regardless of how alembic was invoked.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from alembic import context
 from sqlalchemy import pool
@@ -14,6 +24,7 @@ from app.model.models import ModelProvider  # noqa: F401
 from app.knowledge.models import KnowledgeBase, Folder, Document, Chunk  # noqa: F401
 from app.agent.models import Agent  # noqa: F401
 from app.chat.models import Conversation, Message  # noqa: F401
+from app.workflow.models import Workflow, WorkflowVersion, WorkflowExecution, NodeExecution, WorkflowTemplate  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

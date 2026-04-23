@@ -45,6 +45,20 @@ class AgentService:
         # Default to rag-basic template so new agents work out-of-box
         # (spec 04:32 / 16:121). Caller can override by passing a prompt.
         system_prompt = data.system_prompt if data.system_prompt else _default_system_prompt()
+
+        # Workflow Agent resolution (spec 12 §Phase 1b / 22 §1):
+        # "Create Workflow Agent = create Agent + build Workflow in-place" —
+        # workflows aren't standalone resources from the user's POV. If the
+        # caller didn't supply workflow_id, we provision a fresh draft workflow
+        # owned by this agent and bind it. If the caller passed one (e.g.
+        # cloning an agent), we validate it exists.
+        workflow_id = data.workflow_id
+        if data.agent_type == "workflow":
+            if workflow_id is None:
+                workflow_id = await self._provision_draft_workflow_for(data.name, user_id)
+            else:
+                await self._validate_workflow_binding(workflow_id)
+
         agent = Agent(
             name=data.name,
             description=data.description,
@@ -60,6 +74,7 @@ class AgentService:
             show_thinking=data.show_thinking,
             thinking_detail=data.thinking_detail,
             no_result_mode=data.no_result_mode,
+            workflow_id=workflow_id,
             created_by=user_id,
         )
         self.db.add(agent)
@@ -120,6 +135,11 @@ class AgentService:
             raise ConflictError("Agent has been modified by another user")
         updates = data.model_dump(exclude_unset=True)
         share_flag = updates.pop("share_to_dept", None)
+        # When this is (or becomes) a workflow agent, ensure the workflow_id is
+        # valid + published. AgentUpdate doesn't carry agent_type; we gate on
+        # the stored value.
+        if agent.agent_type == "workflow" and "workflow_id" in updates:
+            await self._validate_workflow_binding(updates["workflow_id"])
         for k, v in updates.items():
             setattr(agent, k, v)
         await self.db.flush()
@@ -130,6 +150,53 @@ class AgentService:
 
         await self._attach_share_flag(agent, user_id)
         return agent
+
+    async def _validate_workflow_binding(self, workflow_id: uuid.UUID | None) -> None:
+        """Validate that the referenced workflow exists.
+
+        NOTE: unlike an early draft of this method, we no longer require the
+        workflow be published. Workflow Agents are authored in-place — the
+        workflow starts life as a draft inside the Agent config page. Chat
+        itself checks `published_graph_data` separately and shows a friendly
+        "请先发布" message if absent.
+        """
+        if workflow_id is None:
+            raise ValueError("Workflow Agent requires workflow_id")
+        from app.workflow.models import Workflow
+        wf = await self.db.get(Workflow, workflow_id)
+        if wf is None:
+            raise ValueError(f"Workflow {workflow_id} not found")
+
+    async def _provision_draft_workflow_for(
+        self, agent_name: str, user_id: uuid.UUID | None,
+    ) -> uuid.UUID:
+        """Create an empty draft Workflow attached to this Agent — per spec 12
+        §Phase 1b, Workflow Agents are created WITH their workflow, not bound
+        to a pre-existing one."""
+        from app.workflow.service import WorkflowService
+        from app.workflow.schemas import WorkflowCreate
+        svc = WorkflowService(self.db)
+        # Seed the DSL with a Start node so the editor opens into a usable
+        # state (no empty canvas). Authors can add / replace nodes from there.
+        seed_graph = {
+            "dsl_version": "1.0",
+            "graph": {
+                "nodes": [
+                    {"id": "start", "type": "start", "position": {"x": 80, "y": 120}, "data": {}},
+                ],
+                "edges": [],
+            },
+            "workflow_variables": [],
+        }
+        wf = await svc.create(
+            WorkflowCreate(
+                name=f"{agent_name} · 工作流",
+                description=f"由工作流智能体 {agent_name} 自动创建",
+                graph_data=seed_graph,
+            ),
+            user_id,
+        )
+        return wf.id
 
     async def _sync_share_to_dept(
         self, agent: Agent, user_id: uuid.UUID, share: bool,

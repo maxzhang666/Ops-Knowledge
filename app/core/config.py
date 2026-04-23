@@ -1,4 +1,14 @@
+import os
+
 from pydantic_settings import BaseSettings
+
+# Disable LangChain / LangSmith tracing at import time.
+# LangGraph (used by the workflow engine, see Plan 29) imports ``langchain_core``
+# transitively; its default tracer would POST to LangSmith unless we opt out.
+# Our observability goes through Langfuse, emitted manually from
+# ``app/model/service.py`` and node adapters. ``setdefault`` lets tests /
+# deployments override if needed, but the default is OFF.
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
 
 
 class Settings(BaseSettings):
@@ -17,10 +27,6 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Active auth provider name; maps to AUTH_PROVIDERS registry key.
-    # "local" is the only built-in in Phase 1a; Phase 1b adds "oidc".
-    AUTH_PROVIDER: str = "local"
-
     # Milvus (default for local dev, production via SystemSettings UI)
     MILVUS_URI: str = "http://localhost:19530"
 
@@ -34,7 +40,13 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "ops-knowledge-docs"
     MINIO_SECURE: bool = False
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # ``extra="ignore"`` tolerates deprecated env vars (e.g. WORKFLOW_ENGINE
+    # removed after Plan 29) — avoids forcing every dev to clean their .env.
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

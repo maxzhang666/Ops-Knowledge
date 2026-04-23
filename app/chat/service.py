@@ -1,7 +1,7 @@
 import uuid
 
 import structlog
-from sqlalchemy import func, select, update
+from sqlalchemy import bindparam, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chat.models import Conversation, Message
@@ -135,7 +135,20 @@ class ConversationService:
         return conv
 
     async def delete_conversation(self, conversation_id: uuid.UUID) -> None:
+        """Hard delete. ``messages`` cascade via FK. Associated LangGraph
+        checkpoints (thread_id = conversation_id) are deleted in the same
+        transaction so the engine tables don't accumulate orphan rows."""
         conv = await self.get_conversation(conversation_id)
+        # LangGraph checkpoint rows are keyed by the bare text thread_id,
+        # which for Workflow Agent runs is ``str(conversation_id)`` (see
+        # app/chat/workflow_pipeline.py). Clean all three LangGraph-managed
+        # tables before dropping the Conversation itself.
+        thread_id = str(conversation_id)
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+            stmt = text(
+                f"DELETE FROM {table} WHERE thread_id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True))
+            await self.db.execute(stmt, {"ids": [thread_id]})
         await self.db.delete(conv)
         await self.db.flush()
         logger.info("conversation_deleted", conversation_id=str(conversation_id))

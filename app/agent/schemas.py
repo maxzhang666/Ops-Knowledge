@@ -17,10 +17,12 @@ class AgentCreate(BaseModel):
     system_prompt: str | None = None
     retrieval_config: dict | None = None
     welcome_message: str | None = None
+    suggested_questions: list[str] | None = None
     show_thinking: bool = True
     thinking_detail: str = Field("normal", pattern="^(minimal|normal)$")
     no_result_mode: str = Field("honest", pattern="^(honest|refuse|hybrid)$")
     share_to_dept: bool = True
+    workflow_id: uuid.UUID | None = None  # required when agent_type == "workflow"
 
 
 class AgentUpdate(BaseModel):
@@ -35,11 +37,13 @@ class AgentUpdate(BaseModel):
     system_prompt: str | None = None
     retrieval_config: dict | None = None
     welcome_message: str | None = None
+    suggested_questions: list[str] | None = None
     show_thinking: bool | None = None
     thinking_detail: str | None = None
     no_result_mode: str | None = None
     share_to_dept: bool | None = None
     is_active: bool | None = None
+    workflow_id: uuid.UUID | None = None
 
 
 class AgentResponse(BaseModel):
@@ -57,6 +61,7 @@ class AgentResponse(BaseModel):
     system_prompt: str | None
     retrieval_config: dict | None
     welcome_message: str | None
+    suggested_questions: list[str] | None = None
     show_thinking: bool
     thinking_detail: str
     no_result_mode: str

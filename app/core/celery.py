@@ -29,9 +29,15 @@ celery_app.conf.update(
             "task": "app.system.tasks.disk_space_monitor",
             "schedule": 3600.0,  # 1 hour
         },
+        "workflow-executions-cleanup": {
+            "task": "app.workflow.tasks.cleanup_old_executions",
+            "schedule": 3600.0,  # 1 hour; retention itself is days-scale
+        },
     },
 )
-celery_app.autodiscover_tasks(["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system"])
+celery_app.autodiscover_tasks(
+    ["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system", "app.workflow"],
+)
 
 
 @worker_ready.connect

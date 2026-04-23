@@ -110,7 +110,10 @@ async def create_agent(
     db: AsyncSession = Depends(get_db),
 ):
     svc = AgentService(db)
-    agent = await svc.create_agent(data, current_user.id)
+    try:
+        agent = await svc.create_agent(data, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return agent
 
 

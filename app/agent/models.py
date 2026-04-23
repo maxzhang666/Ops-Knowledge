@@ -39,6 +39,9 @@ class Agent(Base, UUIDMixin, TimestampMixin):
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     retrieval_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSONB list of quick-prompt strings shown as clickable hint chips in Chat.
+    # Nullable = "author hasn't configured any" (we also treat []  as empty).
+    suggested_questions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     show_thinking: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"

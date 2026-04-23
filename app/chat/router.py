@@ -8,6 +8,15 @@ from app.agent.service import AgentService
 from app.auth.dependencies import CurrentUser, check_resource_access
 from app.core.limiter import limiter
 from app.chat.pipeline import run_rag_pipeline
+from app.chat.workflow_pipeline import run_workflow_pipeline
+
+
+def _pick_pipeline(agent):
+    """Dispatch chat execution by agent type. Both pipelines share the same
+    (event, payload) tuple contract so downstream callers don't branch."""
+    if getattr(agent, "agent_type", "simple") == "workflow":
+        return run_workflow_pipeline
+    return run_rag_pipeline
 from app.chat.schemas import ChatRequest, ConversationResponse, ConversationUpdate, MessageResponse
 from app.chat.service import ConversationService
 from app.chat.streaming import stream_chat_response
@@ -270,7 +279,7 @@ async def chat(
     if "text/event-stream" not in accept:
         return await _sync_blocking_chat(agent=agent, body=body, user_id=current_user.id)
 
-    pipeline = run_rag_pipeline(
+    pipeline = _pick_pipeline(agent)(
         agent=agent,
         query=body.content,
         conversation_id=body.conversation_id,
@@ -290,7 +299,7 @@ async def chat(
 async def _sync_blocking_chat(*, agent, body: ChatRequest, user_id):
     """Drain the pipeline and return the final answer as JSON."""
     from fastapi.responses import JSONResponse
-    pipeline = run_rag_pipeline(
+    pipeline = _pick_pipeline(agent)(
         agent=agent, query=body.content,
         conversation_id=body.conversation_id, user_id=user_id,
     )
@@ -327,7 +336,7 @@ async def _start_async_chat(*, agent, body: ChatRequest, user_id, callback_url: 
     from fastapi.responses import JSONResponse
 
     async def _run():
-        pipeline = run_rag_pipeline(
+        pipeline = _pick_pipeline(agent)(
             agent=agent, query=body.content,
             conversation_id=body.conversation_id, user_id=user_id,
         )
