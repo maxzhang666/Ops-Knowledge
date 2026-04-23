@@ -17,7 +17,8 @@ import { Badge } from "@/components/ui/badge"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import { agentApi, type Agent, type AgentType } from "@/api/agent"
+import { agentApi, type AgentType } from "@/api/agent"
+import { workflowApi, type WorkflowSummary } from "@/api/workflow"
 import { cn } from "@/lib/utils"
 
 // Phase 2 delivered by Plan 31 — unlock orchestrator option.
@@ -40,23 +41,24 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
   const [description, setDescription] = useState("")
   const [agentType, setAgentType] = useState<AgentType>("simple")
   const [loading, setLoading] = useState(false)
-  const [defaultAgentId, setDefaultAgentId] = useState("")
-  const [candidates, setCandidates] = useState<Agent[]>([])
+  const [defaultWorkflowId, setDefaultWorkflowId] = useState("")
+  const [candidates, setCandidates] = useState<WorkflowSummary[]>([])
 
   function reset() {
     setName("")
     setDescription("")
     setAgentType("simple")
-    setDefaultAgentId("")
+    setDefaultWorkflowId("")
   }
 
-  // Load simple agents as potential default_handler targets when Orchestrator picked.
+  // Orchestrator routes to multiple Workflows (each = one SOP canvas).
+  // Load Workflows as default_handler candidates.
   useEffect(() => {
     if (!open || agentType !== "orchestrator") return
-    agentApi.list()
+    workflowApi.list()
       .then((r) => {
-        const items = Array.isArray(r) ? r : (r as { items?: Agent[] }).items ?? []
-        setCandidates(items.filter((a) => (a.agent_type ?? "simple") === "simple" && a.is_active))
+        const items = Array.isArray(r) ? r : ((r as { items?: WorkflowSummary[] }).items ?? [])
+        setCandidates(items)
       })
       .catch(() => setCandidates([]))
   }, [open, agentType])
@@ -65,8 +67,8 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
     e.preventDefault()
     if (!name.trim()) return
 
-    if (agentType === "orchestrator" && !defaultAgentId) {
-      toast.error("编排智能体需要指定默认派发的简易智能体（兜底 handler）")
+    if (agentType === "orchestrator" && !defaultWorkflowId) {
+      toast.error("编排智能体需要指定默认派发的 Workflow（兜底 SOP）")
       return
     }
 
@@ -79,13 +81,12 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
       }
       if (agentType === "orchestrator") {
         // Minimal valid orchestrator_config: default_handler pointing at
-        // the selected Simple Agent. Classifier and rules are added later
-        // in the workbench.
+        // the selected Workflow. Classifier + rules added in the workbench.
         payload.orchestrator_config = {
           default_handler: {
-            handler_type: "simple_agent",
-            handler_id: defaultAgentId,
-            handler_config: {},
+            handler_type: "workflow",
+            handler_id: defaultWorkflowId,
+            handler_config: { input_mapping: { query: "$message" } },
           },
           trusted_metadata_paths: ["user.role", "user.department_id", "user.id"],
           diagnostic_mode_allowed_roles: ["system_admin", "dept_admin"],
@@ -174,16 +175,20 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
 
           {agentType === "orchestrator" && (
             <div className="flex flex-col gap-2">
-              <Label>默认派发的智能体（兜底）*</Label>
+              <Label>默认派发的 Workflow（兜底）*</Label>
               {candidates.length === 0 ? (
                 <p className="rounded-md border border-destructive/50 bg-destructive/5 p-2 text-xs text-destructive">
-                  没有可选的简易智能体。请先创建一个简易智能体作为兜底目标。
+                  没有可选的 Workflow。请先创建一个 Workflow 作为兜底 SOP。
                 </p>
               ) : (
                 <>
-                  <Select value={defaultAgentId} onValueChange={(v) => v && setDefaultAgentId(v)}>
+                  <Select value={defaultWorkflowId} onValueChange={(v) => v && setDefaultWorkflowId(v)}>
                     <SelectTrigger>
-                      <SelectValue placeholder="选择一个简易智能体" />
+                      {defaultWorkflowId
+                        ? <span className="truncate">
+                            {candidates.find((c) => c.id === defaultWorkflowId)?.name ?? defaultWorkflowId}
+                          </span>
+                        : <SelectValue placeholder="选择一个 Workflow" />}
                     </SelectTrigger>
                     <SelectContent>
                       {candidates.map((c) => (
@@ -194,8 +199,8 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    所有规则都未命中时派发到这里。创建后可在"路由配置 → 规则表"
-                    添加更多路由规则。
+                    所有规则都未命中时派发到这个 Workflow。创建后可在"路由配置 → 规则表"
+                    把其他场景路由到各自独立的 Workflow SOP。
                   </p>
                 </>
               )}
@@ -210,7 +215,7 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
               disabled={
                 !name.trim() ||
                 loading ||
-                (agentType === "orchestrator" && !defaultAgentId)
+                (agentType === "orchestrator" && !defaultWorkflowId)
               }
             >
               {loading ? "创建中..." : "创建"}

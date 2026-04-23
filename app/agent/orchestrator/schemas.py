@@ -73,11 +73,6 @@ MATCH_SCHEMAS: dict[str, type[BaseModel]] = {
 
 # ── Handler config per type ──────────────────────────────────────
 
-class SimpleAgentHandlerConfig(BaseModel):
-    # Reserved slot for future per-route overrides (system_prompt etc.)
-    model_config = {"extra": "forbid"}
-
-
 class WorkflowHandlerConfig(BaseModel):
     # Default: map the user message to the workflow's ``query`` var.
     # Each value is a template string; ``$message`` / ``$metadata.foo`` /
@@ -85,35 +80,24 @@ class WorkflowHandlerConfig(BaseModel):
     input_mapping: dict[str, str] = Field(default_factory=lambda: {"query": "$message"})
 
 
-class MCPToolHandlerConfig(BaseModel):
-    tool_name: str = Field(..., min_length=1, max_length=200)
-    arg_template: dict[str, str] = Field(default_factory=lambda: {"input": "$message"})
-
-
-class SubAgentHandlerConfig(BaseModel):
-    model_config = {"extra": "forbid"}
-
-
+# Plan 31 scope = workflow only. Forward-compat: the dict shape is kept so
+# future unlock of simple_agent / mcp_tool / sub_agent is a one-line add.
 HANDLER_SCHEMAS: dict[str, type[BaseModel]] = {
-    "simple_agent": SimpleAgentHandlerConfig,
     "workflow": WorkflowHandlerConfig,
-    "mcp_tool": MCPToolHandlerConfig,
-    "sub_agent": SubAgentHandlerConfig,
 }
 
-# handler_type → whether handler_id is required (skill deferred to P3)
 HANDLER_ID_REQUIRED = {
-    "simple_agent": True,
     "workflow": True,
-    "mcp_tool": True,     # points to mcp_server_id
-    "sub_agent": True,
 }
 
 
 # ── Rule CRUD schemas ────────────────────────────────────────────
 
 MatchType = Literal["condition", "keyword", "regex", "llm_intent"]
-HandlerType = Literal["simple_agent", "workflow", "mcp_tool", "sub_agent"]
+# Plan 31 locks handler_type to "workflow" only; the registry dict above
+# supports more but the rule table doesn't expose them — keeps operator
+# UX focused on "multi-SOP router".
+HandlerType = Literal["workflow"]
 OnHandlerError = Literal["use_default", "fallback_next", "return_error"]
 
 

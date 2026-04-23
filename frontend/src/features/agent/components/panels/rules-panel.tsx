@@ -9,9 +9,10 @@ import {
   orchestratorApi,
   type AgentRule,
   type CreateRulePayload,
-  type HandlerType,
   type MatchType,
 } from "@/api/orchestrator"
+import { workflowApi, type WorkflowSummary } from "@/api/workflow"
+// memory:feedback_dropdown_display_label — 规则表显示 Workflow 名字不是 uuid
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
@@ -26,13 +27,6 @@ const MATCH_LABEL: Record<MatchType, string> = {
   llm_intent: "LLM 意图",
 }
 
-const HANDLER_LABEL: Record<HandlerType, string> = {
-  simple_agent: "Simple Agent",
-  workflow: "Workflow",
-  mcp_tool: "MCP 工具",
-  sub_agent: "Sub Agent",
-}
-
 
 /**
  * Orchestrator 规则表面板（Plan 31 N2.2）。
@@ -45,17 +39,28 @@ const HANDLER_LABEL: Record<HandlerType, string> = {
  */
 export function RulesPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () => void }) {
   const [rules, setRules] = useState<AgentRule[]>([])
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [editingRule, setEditingRule] = useState<AgentRule | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [movingId, setMovingId] = useState<string | null>(null)
 
+  const workflowById = useMemo(() => {
+    const m = new Map<string, WorkflowSummary>()
+    for (const w of workflows) m.set(w.id, w)
+    return m
+  }, [workflows])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const rows = await orchestratorApi.listRules(agent.id)
+      const [rows, wfs] = await Promise.all([
+        orchestratorApi.listRules(agent.id),
+        workflowApi.list().catch(() => [] as WorkflowSummary[]),
+      ])
       setRules(Array.isArray(rows) ? rows : [])
+      setWorkflows(Array.isArray(wfs) ? wfs : (wfs as { items?: WorkflowSummary[] }).items ?? [])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "加载规则失败")
     } finally {
@@ -198,10 +203,13 @@ export function RulesPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () 
                     <span className="font-mono text-[11px]">{summarizeMatch(r)}</span>
                   </td>
                   <td className="px-2 py-2">
-                    <span className="text-muted-foreground">{HANDLER_LABEL[r.handler_type]}</span>
-                    <div className="font-mono text-[10px] text-muted-foreground/70">
-                      {r.handler_id ? `${r.handler_id.slice(0, 8)}…` : "-"}
-                    </div>
+                    {/* memory:feedback_dropdown_display_label — 显示 Workflow 名字不是 uuid */}
+                    <span className="truncate">
+                      {r.handler_id
+                        ? (workflowById.get(r.handler_id)?.name ?? `<unknown ${r.handler_id.slice(0, 8)}…>`)
+                        : "-"}
+                    </span>
+                    <div className="text-[10px] text-muted-foreground">Workflow</div>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.hit_count}</td>
                   <td className="px-2 py-2 text-[11px] text-muted-foreground">

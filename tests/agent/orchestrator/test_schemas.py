@@ -1,4 +1,4 @@
-"""Per-match-type + per-handler-type validation — B1/B3/B5."""
+"""Per-match-type + handler validation — B1/B3/B5 (workflow-only scope, Plan 31)."""
 import uuid
 
 import pytest
@@ -8,7 +8,6 @@ from app.agent.orchestrator.schemas import (
     AgentRuleCreate,
     AgentRuleUpdate,
     ConditionMatchConfig,
-    MCPToolHandlerConfig,
     WorkflowHandlerConfig,
 )
 
@@ -21,11 +20,12 @@ def test_keyword_ok():
     r = AgentRuleCreate(
         match_type="keyword",
         match_config={"any_of": ["foo", "bar"]},
-        handler_type="simple_agent",
+        handler_type="workflow",
         handler_id=_hid(),
     )
     assert r.match_config["any_of"] == ["foo", "bar"]
     assert r.match_config["case_sensitive"] is False  # default
+    assert r.handler_config == {"input_mapping": {"query": "$message"}}
 
 
 def test_keyword_wrong_shape_rejected():
@@ -33,7 +33,7 @@ def test_keyword_wrong_shape_rejected():
         AgentRuleCreate(
             match_type="keyword",
             match_config={"contain": "foo"},  # wrong key
-            handler_type="simple_agent",
+            handler_type="workflow",
             handler_id=_hid(),
         )
 
@@ -55,7 +55,7 @@ def test_regex_invalid_pattern_rejected():
         AgentRuleCreate(
             match_type="regex",
             match_config={"pattern": "(unterminated"},
-            handler_type="simple_agent",
+            handler_type="workflow",
             handler_id=_hid(),
         )
 
@@ -64,41 +64,52 @@ def test_regex_valid():
     r = AgentRuleCreate(
         match_type="regex",
         match_config={"pattern": "foo|bar", "flags": "i"},
-        handler_type="simple_agent",
+        handler_type="workflow",
         handler_id=_hid(),
     )
     assert r.match_config["flags"] == "i"
 
 
-def test_handler_id_required_for_simple_agent():
+def test_handler_id_required_for_workflow():
+    """handler_id must point to a workflow — rejected when null (B1)."""
+    with pytest.raises(ValidationError):
+        AgentRuleCreate(
+            match_type="keyword",
+            match_config={"any_of": ["x"]},
+            handler_type="workflow",
+            handler_id=None,
+        )
+
+
+def test_non_workflow_handler_type_rejected():
+    """Plan 31 scope locks handler_type to 'workflow'. Other values
+    (simple_agent / mcp_tool / sub_agent) are unlocked only by lifting
+    the Literal in schemas.py — a deliberate control point."""
     with pytest.raises(ValidationError):
         AgentRuleCreate(
             match_type="keyword",
             match_config={"any_of": ["x"]},
             handler_type="simple_agent",
-            handler_id=None,
+            handler_id=_hid(),
         )
 
 
-def test_handler_id_required_for_mcp_tool_and_config_validated():
-    # mcp_tool 要 handler_id + tool_name
-    with pytest.raises(ValidationError):
-        AgentRuleCreate(
-            match_type="keyword",
-            match_config={"any_of": ["x"]},
-            handler_type="mcp_tool",
-            handler_id=_hid(),  # missing tool_name
-            handler_config={},
-        )
-    # good
+def test_workflow_custom_input_mapping():
+    """Custom input_mapping with multiple variables — common case for
+    passing user message + extra context into a Workflow."""
     r = AgentRuleCreate(
         match_type="keyword",
         match_config={"any_of": ["x"]},
-        handler_type="mcp_tool",
+        handler_type="workflow",
         handler_id=_hid(),
-        handler_config={"tool_name": "get_ticket"},
+        handler_config={
+            "input_mapping": {
+                "query": "$message",
+                "dept_id": "$user.department_id",
+            },
+        },
     )
-    assert r.handler_config["tool_name"] == "get_ticket"
+    assert r.handler_config["input_mapping"]["dept_id"] == "$user.department_id"
 
 
 def test_workflow_handler_default_input_mapping():

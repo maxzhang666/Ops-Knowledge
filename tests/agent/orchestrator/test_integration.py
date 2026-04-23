@@ -19,7 +19,7 @@ class _RecAdapter:
     """Records invocation and yields a minimal content_delta stream."""
     invocations = []
 
-    def __init__(self, handler_type="simple_agent"):
+    def __init__(self, handler_type: str = "workflow"):
         self.handler_type = handler_type
 
     async def dispatch(self, msg, hid, hcfg, ctx):
@@ -53,7 +53,7 @@ def patched_env(monkeypatch):
     return writes
 
 
-def _rule(priority, match_type, match_config, handler_type="simple_agent"):
+def _rule(priority, match_type, match_config, handler_type="workflow"):
     return SimpleNamespace(
         id=uuid.uuid4(),
         agent_id=uuid.uuid4(),
@@ -74,15 +74,15 @@ async def test_rule_hit_dispatches_and_audits(clean_invocations, patched_env):
 
     rules = [
         _rule(1.0, "keyword", {"any_of": ["zzz"]}),
-        _rule(2.0, "keyword", {"any_of": ["hello"]}, handler_type="simple_agent"),
-        _rule(3.0, "keyword", {"any_of": ["hello"]}, handler_type="workflow"),
+        _rule(2.0, "keyword", {"any_of": ["hello"]}),
+        _rule(3.0, "keyword", {"any_of": ["hello"]}),
     ]
 
     # Build a fake agent with default handler + whitelist
     agent = SimpleNamespace(
         id=uuid.uuid4(),
         orchestrator_config={
-            "default_handler": {"handler_type": "simple_agent", "handler_id": str(uuid.uuid4())},
+            "default_handler": {"handler_type": "workflow", "handler_id": str(uuid.uuid4())},
             "trusted_metadata_paths": ["user.role"],
         },
     )
@@ -118,8 +118,8 @@ async def test_rule_hit_dispatches_and_audits(clean_invocations, patched_env):
     types = [e.type for e in events]
     assert "orchestrator_decision" in types
     assert "content_delta" in types
-    # Second rule (priority 2.0) wins, first invocation should be simple_agent
-    assert _RecAdapter.invocations[0][0] == "simple_agent"
+    # Second rule (priority 2.0) wins
+    assert _RecAdapter.invocations[0][0] == "workflow"
     assert "hello world" in _RecAdapter.invocations[0][2]
     # Audit called once with matched_rule_id set
     assert patched_env
@@ -134,7 +134,7 @@ async def test_no_match_goes_to_default(clean_invocations, patched_env):
     agent = SimpleNamespace(
         id=uuid.uuid4(),
         orchestrator_config={
-            "default_handler": {"handler_type": "simple_agent", "handler_id": str(default_hid)},
+            "default_handler": {"handler_type": "workflow", "handler_id": str(default_hid)},
             "trusted_metadata_paths": ["user.role"],
         },
     )

@@ -3,7 +3,10 @@ import { api } from "./client"
 // ── Types ──────────────────────────────────────────────────────
 
 export type MatchType = "condition" | "keyword" | "regex" | "llm_intent"
-export type HandlerType = "simple_agent" | "workflow" | "mcp_tool" | "sub_agent"
+// Plan 31 scope = "workflow" only. Orchestrator Agent routes to multiple
+// independent Workflows (each its own SOP canvas). Other handler types
+// stay in the protocol but aren't exposed in the UI — future unlock only.
+export type HandlerType = "workflow"
 export type OnHandlerError = "use_default" | "fallback_next" | "return_error"
 
 export type ConditionOp = "==" | "!=" | "in" | "not_in" | ">" | "<" | ">=" | "<="
