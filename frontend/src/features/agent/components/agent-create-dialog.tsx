@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -14,11 +14,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
 import { agentApi, type AgentType } from "@/api/agent"
-import { workflowApi, type WorkflowSummary } from "@/api/workflow"
 import { cn } from "@/lib/utils"
 
 // Phase 2 delivered by Plan 31 — unlock orchestrator option.
@@ -41,36 +37,16 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
   const [description, setDescription] = useState("")
   const [agentType, setAgentType] = useState<AgentType>("simple")
   const [loading, setLoading] = useState(false)
-  const [defaultWorkflowId, setDefaultWorkflowId] = useState("")
-  const [candidates, setCandidates] = useState<WorkflowSummary[]>([])
 
   function reset() {
     setName("")
     setDescription("")
     setAgentType("simple")
-    setDefaultWorkflowId("")
   }
-
-  // Orchestrator routes to multiple Workflows (each = one SOP canvas).
-  // Load Workflows as default_handler candidates.
-  useEffect(() => {
-    if (!open || agentType !== "orchestrator") return
-    workflowApi.list()
-      .then((r) => {
-        const items = Array.isArray(r) ? r : ((r as { items?: WorkflowSummary[] }).items ?? [])
-        setCandidates(items)
-      })
-      .catch(() => setCandidates([]))
-  }, [open, agentType])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
-
-    if (agentType === "orchestrator" && !defaultWorkflowId) {
-      toast.error("编排智能体需要指定默认派发的 Workflow（兜底 SOP）")
-      return
-    }
 
     setLoading(true)
     try {
@@ -80,17 +56,14 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
         agent_type: agentType,
       }
       if (agentType === "orchestrator") {
-        // Minimal valid orchestrator_config: default_handler pointing at
-        // the selected Workflow. Classifier + rules added in the workbench.
+        // 后端 create_agent 对 orchestrator 自动建一个 "默认 SOP" Workflow
+        // 并填入 orchestrator_config.default_handler；前端只需提示一下
+        // trusted paths / diag roles（这些字段可在 workbench 修改）。
         payload.orchestrator_config = {
-          default_handler: {
-            handler_type: "workflow",
-            handler_id: defaultWorkflowId,
-            handler_config: { input_mapping: { query: "$message" } },
-          },
           trusted_metadata_paths: ["user.role", "user.department_id", "user.id"],
           diagnostic_mode_allowed_roles: ["system_admin", "dept_admin"],
           classifier: null,
+          // default_handler 故意留空 —— 后端识别后自动建 Workflow 并回填。
         }
       }
       const agent = await agentApi.create(payload)
@@ -174,50 +147,16 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
           )}
 
           {agentType === "orchestrator" && (
-            <div className="flex flex-col gap-2">
-              <Label>默认派发的 Workflow（兜底）*</Label>
-              {candidates.length === 0 ? (
-                <p className="rounded-md border border-destructive/50 bg-destructive/5 p-2 text-xs text-destructive">
-                  没有可选的 Workflow。请先创建一个 Workflow 作为兜底 SOP。
-                </p>
-              ) : (
-                <>
-                  <Select value={defaultWorkflowId} onValueChange={(v) => v && setDefaultWorkflowId(v)}>
-                    <SelectTrigger>
-                      {defaultWorkflowId
-                        ? <span className="truncate">
-                            {candidates.find((c) => c.id === defaultWorkflowId)?.name ?? defaultWorkflowId}
-                          </span>
-                        : <SelectValue placeholder="选择一个 Workflow" />}
-                    </SelectTrigger>
-                    <SelectContent>
-                      {candidates.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    所有规则都未命中时派发到这个 Workflow。创建后可在"路由配置 → 规则表"
-                    把其他场景路由到各自独立的 Workflow SOP。
-                  </p>
-                </>
-              )}
-            </div>
+            <p className="rounded-md border border-dashed bg-muted/30 p-2 text-xs text-muted-foreground">
+              将自动创建一个"默认 SOP"工作流（作为兜底 handler），创建后可在
+              智能体页面内的"SOP 流程"菜单新增更多独立 SOP，并在"规则表"配置路由。
+            </p>
           )}
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button
-              type="submit"
-              disabled={
-                !name.trim() ||
-                loading ||
-                (agentType === "orchestrator" && !defaultWorkflowId)
-              }
-            >
+            <Button type="submit" disabled={!name.trim() || loading}>
               {loading ? "创建中..." : "创建"}
             </Button>
           </DialogFooter>

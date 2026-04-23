@@ -359,6 +359,8 @@ class OrchestratorService:
         self, agent_id: uuid.UUID, data: AgentRuleCreate,
     ) -> None:
         await self._check_match_against_agent(agent_id, data.match_type, data.match_config)
+        # handler_id must reference a Workflow owned by this Orchestrator (Plan 31 N2.9)
+        await self._assert_handler_workflow_owned(agent_id, data.handler_id)
 
     async def _check_match_against_agent(
         self, agent_id: uuid.UUID, match_type: str, match_config: dict,
@@ -381,3 +383,22 @@ class OrchestratorService:
                 raise ValidationError(
                     f"llm_intent category '{cat}' not in classifier categories: {sorted(known)}"
                 )
+
+    async def _assert_handler_workflow_owned(
+        self, agent_id: uuid.UUID, workflow_id: uuid.UUID | None,
+    ) -> None:
+        """Plan 31 N2.9 — rule's handler_id must reference a Workflow that
+        belongs to THIS Orchestrator (workflows.owner_agent_id == agent_id).
+        Prevents accidental cross-Agent routing + keeps cascade-delete sane.
+        """
+        if workflow_id is None:
+            return
+        from app.workflow.models import Workflow
+        wf = await self.db.get(Workflow, workflow_id)
+        if wf is None:
+            raise ValidationError(f"Workflow {workflow_id} not found")
+        if wf.owner_agent_id != agent_id:
+            raise ValidationError(
+                f"Workflow {workflow_id} is not owned by this Orchestrator — "
+                f"create the Workflow inside this Agent's SOP 流程 first"
+            )

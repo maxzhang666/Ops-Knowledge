@@ -52,12 +52,23 @@ class AgentService:
         # caller didn't supply workflow_id, we provision a fresh draft workflow
         # owned by this agent and bind it. If the caller passed one (e.g.
         # cloning an agent), we validate it exists.
+        #
+        # Orchestrator Agent (Plan 31 N2.9) — similar pattern but 1:N. We
+        # auto-provision ONE default Workflow and wire it as default_handler;
+        # user adds more Workflows from the workbench "SOP 流程" menu.
         workflow_id = data.workflow_id
+        pending_default_workflow_name: str | None = None
         if data.agent_type == "workflow":
             if workflow_id is None:
-                workflow_id = await self._provision_draft_workflow_for(data.name, user_id)
+                # Owner binding filled in after agent.flush() below
+                pending_default_workflow_name = f"{data.name} · 工作流"
             else:
                 await self._validate_workflow_binding(workflow_id)
+        elif data.agent_type == "orchestrator":
+            # Orchestrator: always provision a default Workflow if none wired
+            dh = (data.orchestrator_config or {}).get("default_handler") or {}
+            if not dh.get("handler_id"):
+                pending_default_workflow_name = f"{data.name} · 默认 SOP"
 
         agent = Agent(
             name=data.name,
@@ -82,6 +93,25 @@ class AgentService:
         self.db.add(agent)
         await self.db.flush()
         await self.db.refresh(agent)  # load server-generated created_at/updated_at
+
+        # Auto-provision owned Workflow now that we have agent.id.
+        # Workflow Agent → writes back to agent.workflow_id (legacy 1:1 field).
+        # Orchestrator Agent → wires the Workflow as default_handler.
+        if pending_default_workflow_name is not None:
+            new_wf_id = await self._provision_draft_workflow_for(
+                pending_default_workflow_name, user_id, owner_agent_id=agent.id,
+            )
+            if data.agent_type == "workflow":
+                agent.workflow_id = new_wf_id
+            else:  # orchestrator
+                cfg = dict(agent.orchestrator_config or {})
+                cfg["default_handler"] = {
+                    "handler_type": "workflow",
+                    "handler_id": str(new_wf_id),
+                    "handler_config": {"input_mapping": {"query": "$message"}},
+                }
+                agent.orchestrator_config = cfg
+            await self.db.flush()
 
         if data.share_to_dept:
             dept_svc = DepartmentService(self.db)
@@ -170,16 +200,17 @@ class AgentService:
             raise ValueError(f"Workflow {workflow_id} not found")
 
     async def _provision_draft_workflow_for(
-        self, agent_name: str, user_id: uuid.UUID | None,
+        self,
+        workflow_name: str,
+        user_id: uuid.UUID | None,
+        owner_agent_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
-        """Create an empty draft Workflow attached to this Agent — per spec 12
-        §Phase 1b, Workflow Agents are created WITH their workflow, not bound
-        to a pre-existing one."""
+        """Create a draft Workflow owned by an Agent. Used by both Workflow
+        Agent (1:1 binding) and Orchestrator Agent (1 of N SOPs)."""
         from app.workflow.service import WorkflowService
         from app.workflow.schemas import WorkflowCreate
         svc = WorkflowService(self.db)
-        # Seed the DSL with a Start node so the editor opens into a usable
-        # state (no empty canvas). Authors can add / replace nodes from there.
+        # Seed with Start node so the editor isn't empty.
         seed_graph = {
             "dsl_version": "1.0",
             "graph": {
@@ -192,11 +223,12 @@ class AgentService:
         }
         wf = await svc.create(
             WorkflowCreate(
-                name=f"{agent_name} · 工作流",
-                description=f"由工作流智能体 {agent_name} 自动创建",
+                name=workflow_name,
+                description="自动创建",
                 graph_data=seed_graph,
             ),
             user_id,
+            owner_agent_id=owner_agent_id,
         )
         return wf.id
 

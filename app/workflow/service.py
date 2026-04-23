@@ -18,7 +18,12 @@ class WorkflowService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def create(self, data: WorkflowCreate, user_id: uuid.UUID | None) -> Workflow:
+    async def create(
+        self,
+        data: WorkflowCreate,
+        user_id: uuid.UUID | None,
+        owner_agent_id: uuid.UUID | None = None,
+    ) -> Workflow:
         # Shape-only validation — drafts can be structurally incomplete.
         parse_dsl_loose(data.graph_data)
         wf = Workflow(
@@ -26,6 +31,7 @@ class WorkflowService:
             description=data.description,
             trigger_type=data.trigger_type,
             graph_data=data.graph_data or {},
+            owner_agent_id=owner_agent_id,
             created_by=user_id,
         )
         self.db.add(wf)
@@ -41,13 +47,18 @@ class WorkflowService:
             raise WorkflowNotFound(str(wf_id))
         return wf
 
-    async def list(self, *, page: int = 1, page_size: int = 20) -> list[Workflow]:
-        rows = await self.db.execute(
-            select(Workflow)
-            .order_by(desc(Workflow.updated_at))
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
+    async def list(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        owner_agent_id: uuid.UUID | None = None,
+    ) -> list[Workflow]:
+        stmt = select(Workflow).order_by(desc(Workflow.updated_at))
+        if owner_agent_id is not None:
+            stmt = stmt.where(Workflow.owner_agent_id == owner_agent_id)
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+        rows = await self.db.execute(stmt)
         return list(rows.scalars().all())
 
     async def update(self, wf_id: uuid.UUID, data: WorkflowUpdate) -> Workflow:

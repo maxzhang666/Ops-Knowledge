@@ -70,7 +70,7 @@ async def create_workflow(
 ):
     svc = WorkflowService(db)
     try:
-        return await svc.create(data, user.id)
+        return await svc.create(data, user.id, owner_agent_id=data.owner_agent_id)
     except DSLValidationError as e:
         raise HTTPException(status_code=400, detail=f"Invalid DSL: {e}")
 
@@ -80,9 +80,12 @@ async def list_workflows(
     user: CurrentUser,
     page: int = 1,
     page_size: int = 20,
+    owner_agent_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    return await WorkflowService(db).list(page=page, page_size=page_size)
+    return await WorkflowService(db).list(
+        page=page, page_size=page_size, owner_agent_id=owner_agent_id,
+    )
 
 
 @router.get("/{wf_id}", response_model=WorkflowResponse)

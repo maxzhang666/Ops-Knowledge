@@ -21,6 +21,13 @@ class Workflow(Base, UUIDMixin, TimestampMixin):
     # Frozen runtime copy — scheduler reads this, not graph_data.
     published_graph_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     webhook_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Workflow belongs to its owner Agent (Plan 31 N2.9):
+    #   Workflow Agent → single workflow with owner_agent_id = agent.id
+    #   Orchestrator Agent → N workflows with owner_agent_id = orchestrator.id
+    # NULL = legacy / template / unbound.
+    owner_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True,
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

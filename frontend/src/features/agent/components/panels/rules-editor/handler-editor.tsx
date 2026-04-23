@@ -15,16 +15,18 @@ import { workflowApi, type WorkflowSummary } from "@/api/workflow"
 
 
 export function WorkflowHandlerEditor({
-  handlerId, handlerConfig, onChange,
+  agentId, handlerId, handlerConfig, onChange,
 }: {
+  /** Orchestrator Agent id — 限定只列本 Agent 名下的 Workflow (Plan 31 N2.9) */
+  agentId: string
   handlerId: string | null
   handlerConfig: Record<string, unknown>
   onChange: (handlerId: string | null, handlerConfig: Record<string, unknown>) => void
 }) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   useEffect(() => {
-    workflowApi.list().then(setWorkflows).catch(() => setWorkflows([]))
-  }, [])
+    workflowApi.list({ owner_agent_id: agentId }).then(setWorkflows).catch(() => setWorkflows([]))
+  }, [agentId])
 
   const mapping = (handlerConfig.input_mapping as Record<string, string>) ?? { query: "$message" }
   const selectedWorkflow = handlerId ? workflows.find((w) => w.id === handlerId) : undefined

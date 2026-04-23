@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  FileCode2,
   GitBranch,
   History,
   ListOrdered,
@@ -48,12 +49,21 @@ export const AGENT_MENU_GROUPS: MenuGroup[] = [
     ],
   },
   {
+    // Plan 31 — Orchestrator 的 SOP 库：本 Agent 名下 Workflow 列表
+    // + 新建 + 内嵌编辑器。workflows.owner_agent_id == this_agent.id。
+    id: "sop",
+    label: "SOP 流程",
+    items: [
+      { id: "workflows", label: "工作流列表", icon: FileCode2, description: "本编排智能体名下的 SOP；新建 / 编辑 / 删除" },
+    ],
+  },
+  {
     // Plan 31 — Orchestrator Agent 专属的路由配置组。
     // menuGroupsForAgent 里对非 orchestrator 类型会整组裁掉。
     id: "routing",
     label: "路由配置",
     items: [
-      { id: "rules", label: "规则表", icon: ListOrdered, description: "条件 / 关键词 / 正则 / LLM 意图 → handler 派发" },
+      { id: "rules", label: "规则表", icon: ListOrdered, description: "条件 / 关键词 / 正则 / LLM 意图 → 派发到哪个 SOP" },
       { id: "classifier", label: "意图分类器", icon: Brain, description: "LLM 分类器模型 + 类别 + 阈值配置" },
       { id: "traces", label: "路由审计", icon: History, description: "最近路由决策 + 命中统计" },
     ],
@@ -98,17 +108,18 @@ export function menuGroupsForAgent(agentType: string): MenuGroup[] {
     ...g,
     items: g.items.filter((item) => {
       if (agentType === "workflow") {
-        if (g.id === "routing") return false
+        // Workflow Agent 自有 WorkflowAgentWorkbench，一般不走此菜单
+        if (g.id === "routing" || g.id === "sop") return false
         return item.id !== "persona" && item.id !== "knowledge"
       }
       if (agentType === "orchestrator") {
-        // Orchestrator 不用 KB / workflow 菜单（其能力就是路由到下游）；
-        // capabilities 组同样不展示（下游 Agent 各自配工具）
+        // Orchestrator 有自己的 SOP 库 + 路由组；基础组仅保留 persona（头像/欢迎语）
         if (g.id === "capabilities") return false
+        if (g.id === "basic") return item.id === "persona"
         return item.id !== "workflow" && item.id !== "knowledge"
       }
       // simple agent
-      if (g.id === "routing") return false
+      if (g.id === "routing" || g.id === "sop") return false
       return item.id !== "workflow"
     }),
   })).filter((g) => g.items.length > 0)
@@ -117,7 +128,8 @@ export function menuGroupsForAgent(agentType: string): MenuGroup[] {
 
 export function defaultMenuFor(agentType: string): string {
   if (agentType === "workflow") return "workflow"
-  if (agentType === "orchestrator") return "rules"
+  // Orchestrator 默认打开 "SOP 流程" —— 用户最常做的第一件事是编辑 SOP
+  if (agentType === "orchestrator") return "workflows"
   return DEFAULT_MENU
 }
 

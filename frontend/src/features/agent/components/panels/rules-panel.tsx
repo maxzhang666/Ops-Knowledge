@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
-  Plus, Pencil, Trash2, ArrowUp, ArrowDown, Loader2,
+  Plus, Pencil, Trash2, ArrowUp, ArrowDown, Loader2, ExternalLink,
 } from "lucide-react"
 import { toast } from "sonner"
+import { useSearchParams } from "react-router-dom"
 
 import type { Agent } from "@/api/agent"
 import {
@@ -38,6 +39,7 @@ const MATCH_LABEL: Record<MatchType, string> = {
  * (Plan 31 B5)，前端不用关心精度。N3 再升级为拖拽。
  */
 export function RulesPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () => void }) {
+  const [, setSearchParams] = useSearchParams()
   const [rules, setRules] = useState<AgentRule[]>([])
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -45,6 +47,13 @@ export function RulesPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [movingId, setMovingId] = useState<string | null>(null)
+
+  /** Plan 31 N2.12 — 跳到"SOP 流程"菜单并定位到对应 workflow */
+  function jumpToWorkflowEditor() {
+    setSearchParams({ menu: "workflows" }, { replace: false })
+    // WorkflowsPanel 内部会自动选第一个；完整 deep-link 到具体 workflow
+    // 需要它支持 ?workflow_id 参数，N3 再做。
+  }
 
   const workflowById = useMemo(() => {
     const m = new Map<string, WorkflowSummary>()
@@ -57,7 +66,7 @@ export function RulesPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () 
     try {
       const [rows, wfs] = await Promise.all([
         orchestratorApi.listRules(agent.id),
-        workflowApi.list().catch(() => [] as WorkflowSummary[]),
+        workflowApi.list({ owner_agent_id: agent.id }).catch(() => [] as WorkflowSummary[]),
       ])
       setRules(Array.isArray(rows) ? rows : [])
       setWorkflows(Array.isArray(wfs) ? wfs : (wfs as { items?: WorkflowSummary[] }).items ?? [])
@@ -204,12 +213,24 @@ export function RulesPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () 
                   </td>
                   <td className="px-2 py-2">
                     {/* memory:feedback_dropdown_display_label — 显示 Workflow 名字不是 uuid */}
-                    <span className="truncate">
-                      {r.handler_id
-                        ? (workflowById.get(r.handler_id)?.name ?? `<unknown ${r.handler_id.slice(0, 8)}…>`)
-                        : "-"}
-                    </span>
-                    <div className="text-[10px] text-muted-foreground">Workflow</div>
+                    <div className="flex items-center gap-1">
+                      <span className="truncate">
+                        {r.handler_id
+                          ? (workflowById.get(r.handler_id)?.name ?? `<未找到 ${r.handler_id.slice(0, 8)}…>`)
+                          : "-"}
+                      </span>
+                      {r.handler_id && workflowById.has(r.handler_id) && (
+                        <Button
+                          variant="ghost" size="icon"
+                          className="size-6"
+                          onClick={jumpToWorkflowEditor}
+                          title="到 SOP 流程菜单编辑"
+                        >
+                          <ExternalLink className="size-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Workflow SOP</div>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.hit_count}</td>
                   <td className="px-2 py-2 text-[11px] text-muted-foreground">

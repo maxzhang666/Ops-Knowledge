@@ -12,6 +12,9 @@ class WorkflowCreate(BaseModel):
     description: str | None = None
     trigger_type: str = "manual"
     graph_data: dict | None = None  # optional initial draft DSL
+    # Plan 31 N2.9 — bind to owning Agent at create time. Orchestrator's
+    # rule validator later refuses handler_id that's not owned by itself.
+    owner_agent_id: uuid.UUID | None = None
 
 
 class WorkflowUpdate(BaseModel):
@@ -34,6 +37,7 @@ class WorkflowResponse(BaseModel):
     graph_data: dict
     published_graph_data: dict | None
     webhook_config: dict | None = None
+    owner_agent_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 

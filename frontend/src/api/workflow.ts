@@ -7,6 +7,7 @@ export interface WorkflowSummary {
   version: number
   status: "draft" | "published"
   trigger_type: string
+  owner_agent_id: string | null
   created_at: string
   updated_at: string
 }
@@ -43,13 +44,15 @@ export interface NodeCatalogEntry {
 }
 
 export const workflowApi = {
-  list() {
-    return api.get<WorkflowSummary[]>("/workflow")
+  list(params?: { owner_agent_id?: string }) {
+    const qs: Record<string, string> = {}
+    if (params?.owner_agent_id) qs.owner_agent_id = params.owner_agent_id
+    return api.get<WorkflowSummary[]>("/workflow", Object.keys(qs).length ? qs : undefined)
   },
   get(id: string) {
     return api.get<WorkflowDetail>(`/workflow/${id}`)
   },
-  create(data: { name: string; description?: string }) {
+  create(data: { name: string; description?: string; owner_agent_id?: string }) {
     return api.post<WorkflowDetail>("/workflow", data)
   },
   update(id: string, data: { name?: string; description?: string; graph_data?: unknown }) {

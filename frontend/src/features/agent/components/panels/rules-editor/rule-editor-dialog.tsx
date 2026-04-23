@@ -175,6 +175,7 @@ export function RuleEditorDialog({ open, onOpenChange, editingRule, agent, onSav
           <div className="pt-2">
             <Label className="text-xs">派发到 Workflow</Label>
             <WorkflowHandlerEditor
+              agentId={agent.id}
               handlerId={handlerId}
               handlerConfig={handlerConfig}
               onChange={(hid, hcfg) => {
