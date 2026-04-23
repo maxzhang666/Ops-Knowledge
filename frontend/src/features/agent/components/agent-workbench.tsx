@@ -119,11 +119,12 @@ export function AgentWorkbench({ agent, onUpdated, onDeleted }: AgentWorkbenchPr
     }
   }
 
-  // Fullscreen mode — hide PreviewChat + AgentMenu, render active panel only.
-  // Only supported by panels that expose their own "exit fullscreen" control.
+  // Fullscreen mode — fixed overlay covering the whole viewport (escapes
+  // AppLayout sidebar + breadcrumb + h1 padding). Panel owns its own
+  // "exit fullscreen" control.
   if (isFullscreen && activeMenu === "workflows") {
     return (
-      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-lg border bg-card">
+      <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background">
         {renderPanel()}
       </div>
     )

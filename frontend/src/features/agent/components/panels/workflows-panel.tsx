@@ -122,7 +122,7 @@ export function WorkflowsPanel({
   if (loading) return <LoadingSpinner className="py-16" />
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 w-full flex-1">
       {/* 左侧：Workflow 列表（可折叠） */}
       <aside
         className={cn(
@@ -209,29 +209,23 @@ export function WorkflowsPanel({
         )}
       </aside>
 
-      {/* 右侧：WorkflowEditor */}
+      {/* 右侧：WorkflowEditor（全屏按钮注入它自己的顶栏，不额外起一行） */}
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Toolbar — 全屏切换 + SOP 名字 */}
-        {onToggleFullscreen && (
-          <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs">
-            <span className="truncate text-muted-foreground">
-              {selectedId
-                ? workflows.find((w) => w.id === selectedId)?.name ?? ""
-                : "请选择左侧 SOP"}
-            </span>
-            <button
-              type="button"
-              onClick={onToggleFullscreen}
-              className="inline-flex items-center gap-1 rounded px-2 py-0.5 hover:bg-muted"
-              title={fullscreen ? "退出全屏" : "全屏编辑（隐藏左侧预览聊天 + 菜单）"}
-            >
-              {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-              {fullscreen ? "退出全屏" : "全屏"}
-            </button>
-          </div>
-        )}
         {selectedId ? (
-          <WorkflowEditor workflowId={selectedId} embedded />
+          <WorkflowEditor
+            workflowId={selectedId}
+            embedded
+            extraActions={onToggleFullscreen ? (
+              <Button
+                size="sm" variant="outline"
+                onClick={onToggleFullscreen}
+                title={fullscreen ? "退出全屏" : "全屏编辑（隐藏左侧预览 + 菜单）"}
+              >
+                {fullscreen ? <Minimize2 className="mr-1 size-3.5" /> : <Maximize2 className="mr-1 size-3.5" />}
+                {fullscreen ? "退出全屏" : "全屏"}
+              </Button>
+            ) : undefined}
+          />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
             选择左侧 SOP 开始编辑，或新建一个

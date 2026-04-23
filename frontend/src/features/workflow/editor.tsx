@@ -23,9 +23,13 @@ import { flowToGraph, graphToFlow, type RawGraph } from "./dsl"
 export function WorkflowEditor({
   workflowId,
   embedded = false,
+  extraActions,
 }: {
   workflowId: string
   embedded?: boolean
+  /** 插入到顶栏右侧按钮组最前面 —— 给宿主（如 Orchestrator SOP 面板）
+   * 一个地方注入"全屏/退出全屏"这类布局级开关，避免再叠一行 toolbar。 */
+  extraActions?: React.ReactNode
 }) {
   const workflow = useEditorStore((s) => s.workflow)
   const nodes = useEditorStore((s) => s.nodes)
@@ -140,7 +144,8 @@ export function WorkflowEditor({
             {dirty && " · 未保存"}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {extraActions}
           <Button
             size="sm"
             variant={testOpen ? "default" : "outline"}
