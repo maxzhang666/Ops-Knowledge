@@ -12,6 +12,14 @@ class ChatRequest(BaseModel):
     #   True            → 202 Accepted + POST to callback_url OR poll via /messages/{id}
     async_mode: bool = Field(default=False, alias="async")
     callback_url: str | None = Field(default=None, max_length=500)
+    # Plan 31 — Orchestrator Agent caller-supplied business context.
+    # Lands under ``metadata.input.*`` in routing; NEVER consulted for
+    # trust-gated rule matching. Trusted fields (user.role / .id /
+    # .department_id) are injected from the authenticated session.
+    metadata: dict | None = None
+    # Diagnostic mode — emits an extra ``orchestrator_decision`` SSE
+    # event. Gated by Agent.orchestrator_config.diagnostic_mode_allowed_roles.
+    debug: bool = False
 
     model_config = {"populate_by_name": True}
 

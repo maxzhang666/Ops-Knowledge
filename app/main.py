@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from app.agent.orchestrator.router import router as orchestrator_router
 from app.agent.router import router as agent_router
 from app.auth.router import router as auth_router
 from app.auth.sso_router import router as auth_sso_router
@@ -190,6 +191,7 @@ app.include_router(quality_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ingestion_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agent_router, prefix=settings.API_V1_PREFIX)
+app.include_router(orchestrator_router, prefix=settings.API_V1_PREFIX)
 app.include_router(chat_router, prefix=settings.API_V1_PREFIX)
 app.include_router(workflow_router, prefix=settings.API_V1_PREFIX)
 app.include_router(workflow_node_router, prefix=settings.API_V1_PREFIX)

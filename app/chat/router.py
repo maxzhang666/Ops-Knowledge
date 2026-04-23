@@ -7,15 +7,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.service import AgentService
 from app.auth.dependencies import CurrentUser, check_resource_access
 from app.core.limiter import limiter
+from functools import partial
+
+from app.chat.orchestrator_pipeline import run_orchestrator_pipeline
 from app.chat.pipeline import run_rag_pipeline
 from app.chat.workflow_pipeline import run_workflow_pipeline
 
 
-def _pick_pipeline(agent):
-    """Dispatch chat execution by agent type. Both pipelines share the same
-    (event, payload) tuple contract so downstream callers don't branch."""
-    if getattr(agent, "agent_type", "simple") == "workflow":
+def _pick_pipeline(agent, *, current_user=None, body=None):
+    """Dispatch chat execution by agent type. All three pipelines share
+    the same (event, payload) tuple contract so downstream callers
+    don't branch.
+
+    Orchestrator needs extra kwargs (metadata / debug / user role). We
+    bind them via ``partial`` — caller stays agent-type-agnostic. The
+    user's "primary" department (for condition rules) is resolved lazily
+    inside ``run_orchestrator_pipeline`` via DepartmentService since
+    there's no stored primary concept yet.
+    """
+    atype = getattr(agent, "agent_type", "simple")
+    if atype == "workflow":
         return run_workflow_pipeline
+    if atype == "orchestrator":
+        role = getattr(current_user, "role", None)
+        role_str = role.value if role is not None and hasattr(role, "value") else str(role or "user")
+        return partial(
+            run_orchestrator_pipeline,
+            user_role=role_str,
+            user_department_id=None,  # resolved in pipeline (needs db session)
+            metadata=(body.metadata if body else None),
+            debug=(bool(body.debug) if body else False),
+        )
     return run_rag_pipeline
 from app.chat.schemas import ChatRequest, ConversationResponse, ConversationUpdate, MessageResponse
 from app.chat.service import ConversationService
@@ -272,14 +294,16 @@ async def chat(
     if body.async_mode:
         return await _start_async_chat(
             agent=agent, body=body, user_id=current_user.id,
-            callback_url=body.callback_url,
+            current_user=current_user, callback_url=body.callback_url,
         )
 
     accept = (request.headers.get("accept") or "").lower()
     if "text/event-stream" not in accept:
-        return await _sync_blocking_chat(agent=agent, body=body, user_id=current_user.id)
+        return await _sync_blocking_chat(
+            agent=agent, body=body, user_id=current_user.id, current_user=current_user,
+        )
 
-    pipeline = _pick_pipeline(agent)(
+    pipeline = _pick_pipeline(agent, current_user=current_user, body=body)(
         agent=agent,
         query=body.content,
         conversation_id=body.conversation_id,
@@ -296,10 +320,10 @@ async def chat(
     )
 
 
-async def _sync_blocking_chat(*, agent, body: ChatRequest, user_id):
+async def _sync_blocking_chat(*, agent, body: ChatRequest, user_id, current_user=None):
     """Drain the pipeline and return the final answer as JSON."""
     from fastapi.responses import JSONResponse
-    pipeline = _pick_pipeline(agent)(
+    pipeline = _pick_pipeline(agent, current_user=current_user, body=body)(
         agent=agent, query=body.content,
         conversation_id=body.conversation_id, user_id=user_id,
     )
@@ -327,7 +351,9 @@ async def _sync_blocking_chat(*, agent, body: ChatRequest, user_id):
     })
 
 
-async def _start_async_chat(*, agent, body: ChatRequest, user_id, callback_url: str | None):
+async def _start_async_chat(
+    *, agent, body: ChatRequest, user_id, callback_url: str | None, current_user=None,
+):
     """202 Accepted — drains pipeline in a background asyncio task. Message row
     is created immediately so clients can poll /messages/{id} for status +
     final content. If callback_url is given, POST the result when done.
@@ -336,7 +362,7 @@ async def _start_async_chat(*, agent, body: ChatRequest, user_id, callback_url: 
     from fastapi.responses import JSONResponse
 
     async def _run():
-        pipeline = _pick_pipeline(agent)(
+        pipeline = _pick_pipeline(agent, current_user=current_user, body=body)(
             agent=agent, query=body.content,
             conversation_id=body.conversation_id, user_id=user_id,
         )

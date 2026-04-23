@@ -44,6 +44,10 @@ class Agent(Base, UUIDMixin, TimestampMixin):
 
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     retrieval_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Orchestrator-only config (Plan 31): classifier / default_handler /
+    # trusted_metadata_paths / diagnostic_mode_allowed_roles. NULL for other
+    # agent types; ``retrieval_config`` is KB-specific and must not be overloaded.
+    orchestrator_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSONB list of quick-prompt strings shown as clickable hint chips in Chat.
     # Nullable = "author hasn't configured any" (we also treat []  as empty).
