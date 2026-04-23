@@ -82,3 +82,22 @@ async def check_resource_access(
     priority = {"view": 1, "use": 2, "edit": 3, "full": 4}
     if priority.get(level, 0) < priority.get(required_level, 0):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient access level")
+
+
+async def authenticate_ws_token(token: str | None, db: AsyncSession) -> User:
+    """WebSocket helper — can't use HTTPBearer / Depends chain. Browsers can't
+    attach Authorization headers to WS, so clients pass the JWT via `?token=`.
+    Raises on any issue; the caller translates to a WS close with 4401."""
+    if not token:
+        raise ValueError("missing token")
+    svc = AuthService(db)
+    payload = svc.verify_token(token)
+    if payload is None:
+        raise ValueError("invalid token")
+    sub = payload.get("sub")
+    if not sub:
+        raise ValueError("invalid token (no sub)")
+    user = await svc.get_user_by_id(sub)
+    if user is None:
+        raise ValueError("user not found or inactive")
+    return user
