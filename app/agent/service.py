@@ -67,6 +67,7 @@ class AgentService:
             knowledge_base_ids=data.knowledge_base_ids or [],
             folder_ids=data.folder_ids or [],
             mcp_server_ids=data.mcp_server_ids or [],
+            orchestrator_config=data.orchestrator_config,
             model_provider_id=data.model_provider_id,
             model_name=data.model_name,
             system_prompt=system_prompt,

@@ -1,10 +1,13 @@
 import { useMemo } from "react"
 import {
   BarChart3,
+  Brain,
   ChevronLeft,
   ChevronRight,
   Database,
   GitBranch,
+  History,
+  ListOrdered,
   Radio,
   Sparkles,
   User,
@@ -45,6 +48,17 @@ export const AGENT_MENU_GROUPS: MenuGroup[] = [
     ],
   },
   {
+    // Plan 31 — Orchestrator Agent 专属的路由配置组。
+    // menuGroupsForAgent 里对非 orchestrator 类型会整组裁掉。
+    id: "routing",
+    label: "路由配置",
+    items: [
+      { id: "rules", label: "规则表", icon: ListOrdered, description: "条件 / 关键词 / 正则 / LLM 意图 → handler 派发" },
+      { id: "classifier", label: "意图分类器", icon: Brain, description: "LLM 分类器模型 + 类别 + 阈值配置" },
+      { id: "traces", label: "路由审计", icon: History, description: "最近路由决策 + 命中统计" },
+    ],
+  },
+  {
     id: "capabilities",
     label: "能力扩展",
     items: [
@@ -71,17 +85,30 @@ export const DEFAULT_MENU = "persona"
 
 
 /**
- * Filter menu items by agent_type. Simple agents hide "workflow";
- * Workflow agents hide "persona" / "knowledge" (workflow IS their config).
- * Both keep capabilities + publish groups.
+ * Filter menu items by agent_type.
+ *  - Simple agent: 基础（persona/knowledge）+ capabilities(placeholder) + publish
+ *  - Workflow agent: 基础（workflow only）+ capabilities(placeholder) + publish
+ *    （注意：Workflow Agent 自有 WorkflowAgentWorkbench，一般不走此菜单）
+ *  - Orchestrator agent: 基础（persona 保留作身份配置）+ **routing 组** + publish
+ *    路由组的 rules/classifier/traces 是 Plan 31 N1 后端真实接入点；
+ *    capabilities 组对 orchestrator 没意义（通过规则派发到其他 agent）→ 隐藏
  */
 export function menuGroupsForAgent(agentType: string): MenuGroup[] {
   return AGENT_MENU_GROUPS.map((g) => ({
     ...g,
     items: g.items.filter((item) => {
       if (agentType === "workflow") {
+        if (g.id === "routing") return false
         return item.id !== "persona" && item.id !== "knowledge"
       }
+      if (agentType === "orchestrator") {
+        // Orchestrator 不用 KB / workflow 菜单（其能力就是路由到下游）；
+        // capabilities 组同样不展示（下游 Agent 各自配工具）
+        if (g.id === "capabilities") return false
+        return item.id !== "workflow" && item.id !== "knowledge"
+      }
+      // simple agent
+      if (g.id === "routing") return false
       return item.id !== "workflow"
     }),
   })).filter((g) => g.items.length > 0)
@@ -89,7 +116,9 @@ export function menuGroupsForAgent(agentType: string): MenuGroup[] {
 
 
 export function defaultMenuFor(agentType: string): string {
-  return agentType === "workflow" ? "workflow" : DEFAULT_MENU
+  if (agentType === "workflow") return "workflow"
+  if (agentType === "orchestrator") return "rules"
+  return DEFAULT_MENU
 }
 
 interface AgentMenuProps {

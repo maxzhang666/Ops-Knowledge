@@ -15,6 +15,9 @@ import { PersonaPanel } from "./panels/persona-panel"
 import { KnowledgePanel } from "./panels/knowledge-panel"
 import { ChannelsPanel } from "./panels/channels-panel"
 import { PlaceholderPanel } from "./panels/placeholder-panel"
+import { RulesPanel } from "./panels/rules-panel"
+import { ClassifierPanel } from "./panels/classifier-panel"
+import { TracesPanel } from "./panels/traces-panel"
 import { WorkflowAgentWorkbench } from "./workflow-agent-workbench"
 
 interface AgentWorkbenchProps {
@@ -81,6 +84,12 @@ export function AgentWorkbench({ agent, onUpdated, onDeleted }: AgentWorkbenchPr
         )
       case "channels":
         return <ChannelsPanel agent={agent} />
+      case "rules":
+        return <RulesPanel agent={agent} onUpdated={onUpdated} />
+      case "classifier":
+        return <ClassifierPanel agent={agent} onUpdated={onUpdated} />
+      case "traces":
+        return <TracesPanel agent={agent} />
       default: {
         const item = findMenuItem(activeMenu)
         if (item && item.phase) return <PlaceholderPanel item={item} />

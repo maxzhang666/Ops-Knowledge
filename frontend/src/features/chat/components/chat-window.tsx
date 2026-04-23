@@ -22,6 +22,8 @@ interface ChatWindowProps {
   welcomeMessage?: string
   /** 快捷提问：空会话时展示为可点击的 hint chips。 */
   suggestedQuestions?: string[]
+  /** Plan 31: 驱动 Orchestrator 专属的诊断模式按钮。非 orchestrator 忽略。 */
+  agentType?: string
 }
 
 /**
@@ -39,16 +41,20 @@ interface ChatWindowProps {
  *  - AIChatInput 替代默认 textarea（附件/引用先关闭），onStopGenerate 绑 abortStream
  *  - conversationId 加载历史（getMessages）
  */
-export function ChatWindow({ agentId, conversationId, welcomeMessage, suggestedQuestions }: ChatWindowProps) {
+export function ChatWindow({ agentId, conversationId, welcomeMessage, suggestedQuestions, agentType }: ChatWindowProps) {
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const pendingContent = useChatStore((s) => s.pendingContent)
   const thinkingSteps = useChatStore((s) => s.thinkingSteps)
   const retrievalResults = useChatStore((s) => s.retrievalResults)
   const setMessages = useChatStore((s) => s.setMessages)
+  const orchestratorDecision = useChatStore((s) => s.orchestratorDecision)
+  const handlerInvoked = useChatStore((s) => s.handlerInvoked)
 
   const [refOpen, setRefOpen] = useState(false)
   const [refHighlight, setRefHighlight] = useState<number | undefined>()
+  const [debugMode, setDebugMode] = useState(false)
+  const isOrchestrator = agentType === "orchestrator"
 
   const loadMessages = useCallback(async () => {
     if (!conversationId) {
@@ -103,7 +109,9 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage, suggestedQ
 
   function handleSend(content: string) {
     if (!content.trim()) return
-    sendMessage(agentId, content.trim(), conversationId ?? undefined)
+    sendMessage(agentId, content.trim(), conversationId ?? undefined, {
+      debug: isOrchestrator && debugMode,
+    })
   }
 
   function handleStop() {
@@ -167,6 +175,50 @@ export function ChatWindow({ agentId, conversationId, welcomeMessage, suggestedQ
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {isOrchestrator && (
+        <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-1.5 text-xs">
+          <span className="text-muted-foreground">编排智能体 · 按规则派发到下游</span>
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={debugMode}
+              onChange={(e) => setDebugMode(e.target.checked)}
+              className="size-3.5"
+            />
+            <span>诊断模式（展示路由决策）</span>
+          </label>
+        </div>
+      )}
+      {isOrchestrator && debugMode && (orchestratorDecision || handlerInvoked) && (
+        <div className="border-b bg-amber-50/40 px-3 py-1.5 text-[11px]">
+          {orchestratorDecision?.matched_rule ? (
+            <span>
+              命中规则 <span className="font-mono">{orchestratorDecision.matched_rule.id.slice(0, 8)}</span>
+              （{orchestratorDecision.matched_rule.match_type}）
+              → <span className="font-medium">{orchestratorDecision.matched_rule.handler_type}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">无匹配，走默认 handler</span>
+          )}
+          {orchestratorDecision?.classifier && (
+            <span className="ml-2 text-muted-foreground">
+              · classifier: {orchestratorDecision.classifier.category}
+              （conf {orchestratorDecision.classifier.confidence.toFixed(2)}
+              {orchestratorDecision.classifier.cached ? ", cached" : ""}）
+            </span>
+          )}
+          {orchestratorDecision?.tried_rules && orchestratorDecision.tried_rules.length > 0 && (
+            <span className="ml-2 text-muted-foreground">
+              · 尝试过 {orchestratorDecision.tried_rules.length} 条规则
+            </span>
+          )}
+          {handlerInvoked && (
+            <span className="ml-2 text-muted-foreground">
+              · handler_id: <span className="font-mono">{handlerInvoked.handler_id?.slice(0, 8) ?? "-"}</span>
+            </span>
+          )}
+        </div>
+      )}
       <div className="chat-root min-h-0 flex-1">
         <Chat
           chats={chats}

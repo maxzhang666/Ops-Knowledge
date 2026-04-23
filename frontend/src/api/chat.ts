@@ -61,8 +61,22 @@ export const chatApi = {
 }
 
 export interface SSEEvent {
-  event: "message_start" | "thinking" | "content_delta" | "retrieval_info" | "message_end"
+  // Plan 31: Orchestrator adds `orchestrator_decision` (debug mode) and
+  // `handler_invoked` events — everything else same as Simple/Workflow.
+  event:
+    | "message_start"
+    | "thinking"
+    | "content_delta"
+    | "retrieval_info"
+    | "message_end"
+    | "orchestrator_decision"
+    | "handler_invoked"
   data: string
+}
+
+export interface StreamChatOpts {
+  metadata?: Record<string, unknown>
+  debug?: boolean
 }
 
 export async function streamChat(
@@ -71,15 +85,22 @@ export async function streamChat(
   conversationId?: string,
   onEvent?: (event: SSEEvent) => void,
   signal?: AbortSignal,
+  opts?: StreamChatOpts,
 ) {
   const token = localStorage.getItem("access_token")
+  const body: Record<string, unknown> = {
+    content,
+    conversation_id: conversationId,
+  }
+  if (opts?.metadata) body.metadata = opts.metadata
+  if (opts?.debug) body.debug = true
   const res = await fetch(`/api/v1/agents/${agentId}/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ content, conversation_id: conversationId }),
+    body: JSON.stringify(body),
     signal,
   })
 

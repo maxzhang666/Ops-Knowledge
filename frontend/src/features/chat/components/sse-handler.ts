@@ -35,7 +35,12 @@ async function _tryRecover(
   }
 }
 
-export async function sendMessage(agentId: string, content: string, conversationId?: string) {
+export async function sendMessage(
+  agentId: string,
+  content: string,
+  conversationId?: string,
+  opts?: { debug?: boolean; metadata?: Record<string, unknown> },
+) {
   const store = useChatStore.getState()
   store.startStreaming()
 
@@ -84,12 +89,22 @@ export async function sendMessage(agentId: string, content: string, conversation
               s.setRetrievalResults(data.chunks)
             }
             break
+          case "orchestrator_decision":
+            // Plan 31 debug-mode: attach routing trace to the current
+            // streaming assistant message for in-chat display.
+            s.setOrchestratorDecision(data)
+            break
+          case "handler_invoked":
+            // Diagnostic-only — same gate as orchestrator_decision
+            s.setHandlerInvoked(data)
+            break
           case "message_end":
             // Stream complete — metadata available in data.token_usage, data.trace_id
             break
         }
       },
       abortController.signal,
+      { debug: opts?.debug, metadata: opts?.metadata },
     )
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return

@@ -19,6 +19,10 @@ export interface Agent {
   workflow_id: string | null
   system_prompt: string | null
   retrieval_config: Record<string, unknown> | null
+  // Orchestrator Agent only (Plan 31). Structure:
+  //   { classifier, default_handler, trusted_metadata_paths,
+  //     diagnostic_mode_allowed_roles }
+  orchestrator_config: Record<string, unknown> | null
   welcome_message: string | null
   suggested_questions: string[] | null
   show_thinking: boolean
@@ -26,6 +30,7 @@ export interface Agent {
   no_result_mode: string | null
   is_active: boolean
   share_to_dept: boolean
+  mcp_server_ids?: string[]
   created_by: string
   created_at: string
   updated_at: string
@@ -43,6 +48,7 @@ interface CreateAgentPayload {
   model_name?: string
   system_prompt?: string
   retrieval_config?: Record<string, unknown>
+  orchestrator_config?: Record<string, unknown>  // Plan 31 — required when agent_type === "orchestrator"
   welcome_message?: string
   suggested_questions?: string[]
   show_thinking?: boolean

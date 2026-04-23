@@ -52,6 +52,7 @@ export function PreviewChat({ agent }: PreviewChatProps) {
           conversationId={activeConversationId}
           welcomeMessage={agent.welcome_message ?? undefined}
           suggestedQuestions={agent.suggested_questions ?? undefined}
+          agentType={agent.agent_type}
         />
       </div>
     </div>

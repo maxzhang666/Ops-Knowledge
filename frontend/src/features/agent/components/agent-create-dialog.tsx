@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -14,13 +14,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { agentApi, type AgentType } from "@/api/agent"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import { agentApi, type Agent, type AgentType } from "@/api/agent"
 import { cn } from "@/lib/utils"
 
+// Phase 2 delivered by Plan 31 — unlock orchestrator option.
 const agentTypeOptions: { value: AgentType; label: string; disabled: boolean; badge?: string }[] = [
   { value: "simple", label: "简易智能体", disabled: false },
   { value: "workflow", label: "工作流智能体", disabled: false },
-  { value: "orchestrator", label: "编排智能体", disabled: true, badge: "Phase 2" },
+  { value: "orchestrator", label: "编排智能体", disabled: false, badge: "New" },
 ]
 
 interface AgentCreateDialogProps {
@@ -29,34 +33,66 @@ interface AgentCreateDialogProps {
   onCreated: () => void
 }
 
+
 export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreateDialogProps) {
   const navigate = useNavigate()
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [agentType, setAgentType] = useState<AgentType>("simple")
   const [loading, setLoading] = useState(false)
+  const [defaultAgentId, setDefaultAgentId] = useState("")
+  const [candidates, setCandidates] = useState<Agent[]>([])
 
   function reset() {
     setName("")
     setDescription("")
     setAgentType("simple")
+    setDefaultAgentId("")
   }
+
+  // Load simple agents as potential default_handler targets when Orchestrator picked.
+  useEffect(() => {
+    if (!open || agentType !== "orchestrator") return
+    agentApi.list()
+      .then((r) => {
+        const items = Array.isArray(r) ? r : (r as { items?: Agent[] }).items ?? []
+        setCandidates(items.filter((a) => (a.agent_type ?? "simple") === "simple" && a.is_active))
+      })
+      .catch(() => setCandidates([]))
+  }, [open, agentType])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
 
+    if (agentType === "orchestrator" && !defaultAgentId) {
+      toast.error("编排智能体需要指定默认派发的简易智能体（兜底 handler）")
+      return
+    }
+
     setLoading(true)
     try {
-      // Per spec 12 / 22: creating a Workflow Agent auto-provisions its
-      // workflow server-side; UI doesn't need to prompt for an existing
-      // workflow_id. The agent lands straight into the Workbench where the
-      // embedded editor opens on the auto-created draft.
-      const agent = await agentApi.create({
+      const payload: Parameters<typeof agentApi.create>[0] = {
         name: name.trim(),
         description: description.trim() || undefined,
         agent_type: agentType,
-      })
+      }
+      if (agentType === "orchestrator") {
+        // Minimal valid orchestrator_config: default_handler pointing at
+        // the selected Simple Agent. Classifier and rules are added later
+        // in the workbench.
+        payload.orchestrator_config = {
+          default_handler: {
+            handler_type: "simple_agent",
+            handler_id: defaultAgentId,
+            handler_config: {},
+          },
+          trusted_metadata_paths: ["user.role", "user.department_id", "user.id"],
+          diagnostic_mode_allowed_roles: ["system_admin", "dept_admin"],
+          classifier: null,
+        }
+      }
+      const agent = await agentApi.create(payload)
       reset()
       onOpenChange(false)
       onCreated()
@@ -135,11 +171,48 @@ export function AgentCreateDialog({ open, onOpenChange, onCreated }: AgentCreate
               将自动为该智能体创建一个空白工作流草稿，创建后可在智能体页面内直接编辑。
             </p>
           )}
+
+          {agentType === "orchestrator" && (
+            <div className="flex flex-col gap-2">
+              <Label>默认派发的智能体（兜底）*</Label>
+              {candidates.length === 0 ? (
+                <p className="rounded-md border border-destructive/50 bg-destructive/5 p-2 text-xs text-destructive">
+                  没有可选的简易智能体。请先创建一个简易智能体作为兜底目标。
+                </p>
+              ) : (
+                <>
+                  <Select value={defaultAgentId} onValueChange={(v) => v && setDefaultAgentId(v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择一个简易智能体" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {candidates.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    所有规则都未命中时派发到这里。创建后可在"路由配置 → 规则表"
+                    添加更多路由规则。
+                  </p>
+                </>
+              )}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button type="submit" disabled={!name.trim() || loading}>
+            <Button
+              type="submit"
+              disabled={
+                !name.trim() ||
+                loading ||
+                (agentType === "orchestrator" && !defaultAgentId)
+              }
+            >
               {loading ? "创建中..." : "创建"}
             </Button>
           </DialogFooter>

@@ -17,6 +17,10 @@ class AgentCreate(BaseModel):
     model_id: uuid.UUID | None = None
     system_prompt: str | None = None
     retrieval_config: dict | None = None
+    # Orchestrator Agent only (Plan 31). Shape validated by OrchestratorConfig
+    # at use-time; stored as opaque JSONB. Must include default_handler when
+    # agent_type == "orchestrator" (service enforces).
+    orchestrator_config: dict | None = None
     welcome_message: str | None = None
     suggested_questions: list[str] | None = None
     show_thinking: bool = True
@@ -38,6 +42,7 @@ class AgentUpdate(BaseModel):
     model_id: uuid.UUID | None = None
     system_prompt: str | None = None
     retrieval_config: dict | None = None
+    orchestrator_config: dict | None = None
     welcome_message: str | None = None
     suggested_questions: list[str] | None = None
     show_thinking: bool | None = None
@@ -57,6 +62,7 @@ class AgentResponse(BaseModel):
     knowledge_base_ids: list[str]
     folder_ids: list[str]
     mcp_server_ids: list[str] = []
+    orchestrator_config: dict | None = None
     model_provider_id: uuid.UUID | None
     model_name: str | None
     model_id: uuid.UUID | None
