@@ -54,7 +54,7 @@ python-magic>=0.4.27
 
 # Workflow engine — LangGraph
 # Precise version pin; upgrades done manually (see docs/superpowers/plans/2026-04-21-phase1b-plan29-langgraph-migration.md §Dependencies)
-langgraph==1.1.0
+langgraph==1.1.9
 langgraph-checkpoint-postgres>=2.0.0,<3.0.0
 # langgraph-checkpoint-postgres uses psycopg3 for its PG driver. The [binary]
 # extra ships a wheel with a bundled libpq so we don't need libpq-dev on the
@@ -66,6 +66,12 @@ psycopg[binary]>=3.2.0
 # upgrade. sse-starlette<3.0 enforced for the same reason.
 mcp==1.15.0
 sse-starlette<3.0
+
+# Agent Runtime (Plan 30 M2). langchain-litellm wraps LiteLLM as a LangChain
+# BaseChatModel so create_react_agent can drive any provider LiteLLM supports.
+# langchain-mcp-adapters exposes MCP servers as LangChain tools.
+langchain-mcp-adapters>=0.2.0,<0.3.0
+langchain-litellm>=0.6.0,<0.7.0
 
 # Testing
 pytest==8.3.5

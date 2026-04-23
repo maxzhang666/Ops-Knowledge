@@ -9,6 +9,7 @@ import { useEffect, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { modelApi, type ModelProvider, type RegistryEntry } from "@/api/model"
 import { knowledgeApi } from "@/api/knowledge"
+import { mcpApi, type MCPServer } from "@/api/mcp"
 
 
 export function ModelProviderPicker({
@@ -334,6 +335,197 @@ export function FolderPicker({
       <div className="mt-1 px-2 text-[10px] text-muted-foreground">
         已选 {selected.size} 个（留空 = 全部文件夹）
       </div>
+    </div>
+  )
+}
+
+
+/**
+ * 单选模型登记项 picker — 返回 registry id。用于 agent_react 节点，
+ * 其后端只认 model_registry_id（见 ``_agent_react.py`` config_form）。
+ */
+export function ModelRegistryPicker({
+  value,
+  kind = "llm",
+  onChange,
+}: {
+  value: string | undefined
+  kind?: "llm" | "embedding" | "reranker"
+  onChange: (registryId: string) => void
+}) {
+  const [entries, setEntries] = useState<RegistryEntry[]>([])
+  const [providers, setProviders] = useState<ModelProvider[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([
+      modelApi.listRegistry().catch(() => [] as RegistryEntry[]),
+      modelApi.list().catch(() => [] as ModelProvider[]),
+    ]).then(([reg, provs]) => {
+      setEntries(reg.filter((r) => r.model_type === kind && r.is_enabled !== false))
+      setProviders(provs)
+    }).finally(() => setLoading(false))
+  }, [kind])
+
+  if (loading) return <p className="text-xs text-muted-foreground">加载模型...</p>
+
+  if (entries.length === 0) {
+    return (
+      <p className="rounded-md border border-dashed bg-muted/30 p-2 text-xs text-muted-foreground">
+        未发现已启用的{kind === "llm" ? "大模型" : kind === "embedding" ? "向量模型" : "重排模型"}，
+        请先在 设置 → 模型 发现并启用。
+      </p>
+    )
+  }
+
+  const providerById = new Map(providers.map((p) => [p.id, p]))
+  const groups = new Map<string, { label: string; items: RegistryEntry[] }>()
+  for (const e of entries) {
+    const p = providerById.get(e.provider_id)
+    const key = e.provider_id
+    if (!groups.has(key)) {
+      groups.set(key, {
+        label: p ? `${p.name}（${p.type}）` : e.provider_name ?? "未知供应商",
+        items: [],
+      })
+    }
+    groups.get(key)!.items.push(e)
+  }
+
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+    >
+      <option value="">-- 选择模型 --</option>
+      {Array.from(groups.entries()).map(([pid, g]) => (
+        <optgroup key={pid} label={g.label}>
+          {g.items.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.display_name || r.model_id}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  )
+}
+
+
+/**
+ * MCP Server multi-select — 目标 ``mcp_server_ids`` 字段。
+ * 只显示 is_active 的 server；不健康的也展示但打灰。
+ */
+export function MCPServerPicker({
+  value,
+  onChange,
+}: {
+  value: string[] | undefined
+  onChange: (v: string[]) => void
+}) {
+  const [servers, setServers] = useState<MCPServer[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    mcpApi.list(true)
+      .then((rows) => setServers(Array.isArray(rows) ? rows : []))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <p className="text-xs text-muted-foreground">加载 MCP 服务器...</p>
+
+  if (servers.length === 0) {
+    return (
+      <p className="rounded-md border border-dashed bg-muted/30 p-2 text-xs text-muted-foreground">
+        未配置 MCP 服务器，请先前往 设置 → MCP 服务器 添加。
+      </p>
+    )
+  }
+
+  const selected = new Set(value ?? [])
+
+  function toggle(id: string) {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onChange(Array.from(next))
+  }
+
+  return (
+    <div className="max-h-48 overflow-y-auto rounded-md border p-2">
+      {servers.map((s) => {
+        const toolCount = s.discovered_tools?.length ?? 0
+        const enabledCount = s.enabled_tools?.length ?? toolCount
+        const unhealthy = s.health_status && s.health_status !== "ok"
+        return (
+          <label
+            key={s.id}
+            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
+          >
+            <input
+              type="checkbox"
+              checked={selected.has(s.id)}
+              onChange={() => toggle(s.id)}
+            />
+            <span className={`flex-1 truncate ${unhealthy ? "text-muted-foreground line-through" : ""}`}>
+              {s.name}
+              <span className="ml-1 text-[10px] text-muted-foreground">
+                ({s.transport_type} · {enabledCount} 工具)
+              </span>
+            </span>
+          </label>
+        )
+      })}
+      <div className="mt-1 px-2 text-[10px] text-muted-foreground">已选 {selected.size} 个</div>
+    </div>
+  )
+}
+
+
+/**
+ * Multi-select for ``builtin_tools`` —— 固定三个内置工具，无需后端 API。
+ */
+export function BuiltinToolsPicker({
+  value,
+  onChange,
+}: {
+  value: string[] | undefined
+  onChange: (v: string[]) => void
+}) {
+  const TOOLS = [
+    { id: "knowledge_search", label: "knowledge_search", desc: "检索绑定知识库" },
+    { id: "code_execute", label: "code_execute", desc: "Docker 沙箱执行 Python" },
+    { id: "http_request", label: "http_request", desc: "调用外部 HTTP API" },
+  ]
+  const selected = new Set(value ?? [])
+
+  function toggle(id: string) {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onChange(Array.from(next))
+  }
+
+  return (
+    <div className="flex flex-col gap-1 rounded-md border p-2">
+      {TOOLS.map((t) => (
+        <label
+          key={t.id}
+          className="flex cursor-pointer items-start gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
+        >
+          <input
+            type="checkbox"
+            checked={selected.has(t.id)}
+            onChange={() => toggle(t.id)}
+            className="mt-0.5"
+          />
+          <span className="flex-1">
+            <span className="font-mono">{t.label}</span>
+            <span className="ml-1 text-muted-foreground">— {t.desc}</span>
+          </span>
+        </label>
+      ))}
     </div>
   )
 }

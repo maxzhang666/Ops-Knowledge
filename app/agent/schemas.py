@@ -11,6 +11,7 @@ class AgentCreate(BaseModel):
     agent_type: str = Field("simple", pattern="^(simple|workflow|orchestrator)$")
     knowledge_base_ids: list[str] | None = None
     folder_ids: list[str] | None = None
+    mcp_server_ids: list[str] | None = None
     model_provider_id: uuid.UUID | None = None
     model_name: str | None = Field(None, max_length=100)
     model_id: uuid.UUID | None = None
@@ -31,6 +32,7 @@ class AgentUpdate(BaseModel):
     avatar: str | None = None
     knowledge_base_ids: list[str] | None = None
     folder_ids: list[str] | None = None
+    mcp_server_ids: list[str] | None = None
     model_provider_id: uuid.UUID | None = None
     model_name: str | None = Field(None, min_length=1, max_length=100)
     model_id: uuid.UUID | None = None
@@ -54,6 +56,7 @@ class AgentResponse(BaseModel):
     agent_type: str
     knowledge_base_ids: list[str]
     folder_ids: list[str]
+    mcp_server_ids: list[str] = []
     model_provider_id: uuid.UUID | None
     model_name: str | None
     model_id: uuid.UUID | None
@@ -73,7 +76,7 @@ class AgentResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @field_validator("knowledge_base_ids", "folder_ids", mode="before")
+    @field_validator("knowledge_base_ids", "folder_ids", "mcp_server_ids", mode="before")
     @classmethod
     def _none_to_empty(cls, v):
         return v if v is not None else []

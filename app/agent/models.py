@@ -23,6 +23,12 @@ class Agent(Base, UUIDMixin, TimestampMixin):
     folder_ids: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default="[]"
     )
+    # MCP server bindings (Plan 30 M2). List of mcp_servers.id UUIDs. The
+    # Agent Runtime composes tools from these + built-in tools at execute
+    # time; admin-level ``enabled_tools`` whitelist gates visible tools.
+    mcp_server_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
 
     model_provider_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("model_providers.id"), nullable=True

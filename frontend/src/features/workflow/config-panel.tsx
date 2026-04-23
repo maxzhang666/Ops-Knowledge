@@ -12,9 +12,12 @@ import { ParametersEditor } from "./editors/parameters"
 import { KeyValueEditor } from "./editors/key-value"
 import { JsonBodyEditor } from "./editors/json-body"
 import {
+  BuiltinToolsPicker,
   FolderPicker,
   KnowledgeBasePicker,
   LLMModelPicker,
+  MCPServerPicker,
+  ModelRegistryPicker,
 } from "./editors/pickers"
 import { InputBindingEditor } from "./editors/input-binding"
 
@@ -204,6 +207,40 @@ function FieldRenderer({
           onChange={(pid, mn) =>
             patchFields({ model_provider_id: pid, model_name: mn })
           }
+        />
+      </div>
+    )
+  }
+  if (name === "model_registry_id") {
+    return (
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs">{label}</Label>
+        <ModelRegistryPicker
+          value={value as string | undefined}
+          kind="llm"
+          onChange={(v) => onChange(v)}
+        />
+      </div>
+    )
+  }
+  if (name === "mcp_server_ids") {
+    return (
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs">{label}</Label>
+        <MCPServerPicker
+          value={(value as string[] | undefined) ?? []}
+          onChange={(v) => onChange(v)}
+        />
+      </div>
+    )
+  }
+  if (name === "builtin_tools") {
+    return (
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs">{label}</Label>
+        <BuiltinToolsPicker
+          value={(value as string[] | undefined) ?? []}
+          onChange={(v) => onChange(v)}
         />
       </div>
     )
