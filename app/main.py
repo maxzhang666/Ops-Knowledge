@@ -23,6 +23,7 @@ from app.knowledge.ingestion_router import router as ingestion_router
 from app.knowledge.quality_router import router as quality_router
 from app.knowledge.retrieval_router import router as retrieval_router
 from app.knowledge.router import router as kb_router
+from app.mcp.router import router as mcp_router
 from app.model.router import router as model_router
 from app.system.init_router import router as init_router
 from app.system.notification_router import router as notification_router
@@ -175,6 +176,7 @@ app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(auth_sso_router, prefix=settings.API_V1_PREFIX)
 app.include_router(department_router, prefix=settings.API_V1_PREFIX)
 app.include_router(model_router, prefix=settings.API_V1_PREFIX)
+app.include_router(mcp_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(init_router, prefix=settings.API_V1_PREFIX)
 app.include_router(notification_router, prefix=settings.API_V1_PREFIX)

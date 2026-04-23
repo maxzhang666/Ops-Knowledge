@@ -1,12 +1,13 @@
 import { NavLink, Outlet } from "react-router-dom"
 import {
-  Activity, Building2, Cpu, Key, Settings, ShieldCheck, UserCircle, Users,
+  Activity, Building2, Cpu, Key, Plug, Settings, ShieldCheck, UserCircle, Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuthStore } from "@/stores/auth"
 
 const allNavItems = [
   { to: "/settings/models", icon: Cpu, label: "模型供应商", adminOnly: false },
+  { to: "/settings/mcp", icon: Plug, label: "MCP 服务器", adminOnly: true },
   { to: "/settings/departments", icon: Building2, label: "部门管理", adminOnly: true },
   { to: "/settings/users", icon: Users, label: "用户管理", adminOnly: true },
   { to: "/settings/sso", icon: ShieldCheck, label: "SSO 认证", adminOnly: true },

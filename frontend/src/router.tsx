@@ -12,6 +12,7 @@ import AgentDetailPage from "@/pages/agents/detail"
 import WorkflowEditorPage from "@/pages/workflow/editor"
 import SettingsLayout from "@/pages/settings/layout"
 import ModelsPage from "@/pages/settings/models"
+import McpServersPage from "@/pages/settings/mcp-servers"
 import DepartmentsPage from "@/pages/settings/departments"
 import UsersPage from "@/pages/settings/users"
 import SystemPage from "@/pages/settings/system"
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <Navigate to="/settings/models" replace /> },
               { path: "models", element: <ModelsPage /> },
+              { path: "mcp", element: <McpServersPage /> },
               { path: "departments", element: <DepartmentsPage /> },
               { path: "users", element: <UsersPage /> },
               { path: "sso", element: <SsoSettingsPage /> },
