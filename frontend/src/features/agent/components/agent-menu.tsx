@@ -48,8 +48,12 @@ export const AGENT_MENU_GROUPS: MenuGroup[] = [
     id: "capabilities",
     label: "能力扩展",
     items: [
-      { id: "tools", label: "内置工具", icon: Wrench, phase: "2", description: "knowledge_search / code_execute / http_request 等系统内置工具" },
-      { id: "mcp", label: "MCP", icon: Zap, phase: "2", description: "MCP Server 绑定，扩展第三方能力" },
+      // Simple Agent 不直接支持工具/MCP（runtime 仍是 P1a chat pipeline）；
+      // 要使用请创建 Workflow Agent，在 Workflow 编辑器的 "Agent (ReAct)"
+      // 节点里配置 builtin_tools / mcp_server_ids。Simple Agent 的 tools 接入
+      // 留到 P3 随 LangGraph 收敛（spec 04 §Agent Runtime）。
+      { id: "tools", label: "内置工具", icon: Wrench, phase: "3", description: "knowledge_search / code_execute / http_request —— Simple Agent 暂不支持，请创建 Workflow Agent，在其 Agent 节点配置" },
+      { id: "mcp", label: "MCP", icon: Zap, phase: "3", description: "MCP Server 绑定 —— Simple Agent 暂不支持，请创建 Workflow Agent，在其 Agent 节点配置" },
       { id: "skill", label: "Skill", icon: Sparkles, phase: "3", description: "技能包（Instructions + Tools + Templates）" },
     ],
   },
