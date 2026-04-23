@@ -17,12 +17,8 @@ import uuid
 from typing import Any
 
 import structlog
-from langchain_litellm import ChatLiteLLM
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
 from sqlalchemy import select
 
-from app.agent.tools import ToolContext, build_builtin_tools
 from app.core.database import async_session
 from app.mcp.audit import CallContext, use_call_context
 from app.mcp.models import MCPServer
@@ -36,7 +32,16 @@ from app.workflow.nodes.base import (
     NodeResult,
 )
 
+# Heavy deps (langchain-litellm / langchain-mcp-adapters / langgraph) are
+# imported inside ``execute()`` so the node module can always be scanned
+# and registered. If an env hasn't pip-installed them yet, the node still
+# shows up in the palette — invocation fails with a clear message.
+
 logger = structlog.get_logger(__name__)
+
+
+class _MissingDependency(RuntimeError):
+    """Raised when one of the agent-runtime deps isn't installed yet."""
 
 
 class AgentReactNode(AbstractNode):
@@ -90,9 +95,26 @@ class AgentReactNode(AbstractNode):
             raise ValueError("agent_react: model_registry_id is required")
 
     async def execute(self, ctx: NodeContext) -> NodeResult:
-        query = ctx.inputs.get("query") or ""
+        # Lazy import — failure here is a clear "pip install -r requirements.txt"
+        # rather than a silent node-registry outage at app startup.
+        try:
+            from langchain_litellm import ChatLiteLLM  # noqa: F401
+            from langchain_mcp_adapters.client import MultiServerMCPClient  # noqa: F401
+            from langgraph.prebuilt import create_react_agent  # noqa: F401
+
+            from app.agent.tools import ToolContext, build_builtin_tools  # noqa: F401
+        except ImportError as e:
+            raise _MissingDependency(
+                "agent_react requires langchain-litellm / langchain-mcp-adapters / "
+                "langgraph. Run 'pip install -r requirements.txt' and restart."
+            ) from e
+
         if not isinstance(query, str) or not query.strip():
             raise ValueError("agent_react: 'query' input is empty")
+
+        from langchain_litellm import ChatLiteLLM
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+        from app.agent.tools import ToolContext, build_builtin_tools
 
         registry_id = uuid.UUID(str(ctx.config["model_registry_id"]))
         system_prompt = ctx.config.get("system_prompt") or ""
@@ -171,6 +193,8 @@ class AgentReactNode(AbstractNode):
 
 
 async def _run_agent(llm, tools, system_prompt, query, max_iter):
+    from langgraph.prebuilt import create_react_agent
+
     agent = create_react_agent(llm, tools)
     input_messages: list[dict] = []
     if system_prompt.strip():
