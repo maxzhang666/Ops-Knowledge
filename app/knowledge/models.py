@@ -48,6 +48,10 @@ class KnowledgeBase(Base, UUIDMixin, TimestampMixin):
     )
     chunking_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     retrieval_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Plan 32 M3 — per-KB lifecycle policy:
+    #   { "expiration_threshold_days": int, "auto_archive_idle_days": int }
+    # NULL → system defaults
+    governance_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[KBStatus] = mapped_column(
@@ -152,6 +156,15 @@ class Chunk(Base):
     is_manually_edited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     edit_history: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    # Plan 32 M1 — dynamic-score denormalized rollup columns; rebuilt by
+    # Celery batch (app.knowledge.governance.tasks.chunk_score_rebuild).
+    adopted_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    feedback_positive: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    feedback_negative: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    quality_dynamic: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_composite: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_adopted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

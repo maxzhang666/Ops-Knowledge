@@ -45,11 +45,16 @@ celery_app.conf.update(
             "task": "app.agent.orchestrator.tasks.priority_rebalance",
             "schedule": 86400.0,  # daily; rebalance only kicks in on precision collision
         },
+        "chunk-score-rebuild": {
+            "task": "app.knowledge.governance.tasks.chunk_score_rebuild",
+            "schedule": 300.0,  # 5 min — Plan 32 M1.6 near-realtime dynamic score
+        },
     },
 )
 celery_app.autodiscover_tasks(
     [
-        "app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system",
+        "app.knowledge.ingestion", "app.knowledge.embedding", "app.knowledge.governance",
+        "app.chat", "app.system",
         "app.workflow", "app.mcp", "app.agent.orchestrator",
     ],
 )

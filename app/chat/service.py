@@ -121,6 +121,57 @@ class ConversationService:
         await self.db.flush()
         return msg
 
+    async def set_feedback(
+        self,
+        message_id: uuid.UUID,
+        feedback: int | None,
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> Message:
+        """Set / clear a message's feedback and emit governance events
+        for every chunk this message cited (Plan 32 M1.5).
+
+        Previous feedback is cleared via a ``feedback_reverse`` event so
+        the rebuild job nets out flipped votes.
+        """
+        msg = await self.get_message(message_id)
+        previous = msg.feedback
+
+        # Derive (chunk_id, kb_id) pairs from message metadata — retrieval_chunks
+        # is the authoritative list of what was shown + cited.
+        pairs: list[tuple[uuid.UUID, uuid.UUID]] = []
+        md = msg.metadata_ or {}
+        for c in (md.get("retrieval_chunks") or []):
+            cid = c.get("id") or c.get("chunk_id")
+            kb = c.get("source_kb_id")
+            if not cid or not kb:
+                continue
+            try:
+                pairs.append((uuid.UUID(str(cid)), uuid.UUID(str(kb))))
+            except Exception:
+                continue
+
+        from app.knowledge.governance.events import record_feedback
+
+        # Reverse previous sentiment first (if any and different from new)
+        if previous is not None and previous != (feedback or 0) and pairs:
+            await record_feedback(
+                self.db, pairs, sentiment=0,
+                message_id=message_id, user_id=user_id,
+            )
+
+        # Record new sentiment (feedback=0 / None both mean "no opinion",
+        # don't double-write a reverse for a fresh 0)
+        if feedback is not None and feedback != 0 and feedback != previous and pairs:
+            await record_feedback(
+                self.db, pairs, sentiment=feedback,
+                message_id=message_id, user_id=user_id,
+            )
+
+        msg.feedback = feedback
+        await self.db.flush()
+        return msg
+
     async def update_conversation(
         self,
         conversation_id: uuid.UUID,

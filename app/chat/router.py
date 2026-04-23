@@ -227,6 +227,41 @@ async def get_message(
     return MessageResponse.model_validate(msg)
 
 
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/feedback",
+    response_model=MessageResponse,
+)
+async def set_message_feedback(
+    agent_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    body: dict,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Plan 32 M1.5 — set/clear feedback; writes chunk_usage_events for
+    every retrieval chunk this message cited so dynamic scoring can
+    weight feedback.
+
+    Body: ``{"feedback": 1|-1|0|null}``
+    """
+    agent_svc = AgentService(db)
+    agent = await agent_svc.get_agent(agent_id)
+    await check_resource_access(current_user, "agent", agent.id, db, agent.created_by)
+
+    svc = ConversationService(db)
+    conv = await svc.get_conversation(conversation_id)
+    if conv.user_id != current_user.id:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Cannot feedback another user's message")
+    fb = body.get("feedback")
+    if fb is not None and fb not in (-1, 0, 1):
+        from fastapi import HTTPException
+        raise HTTPException(400, "feedback must be -1, 0, 1, or null")
+    msg = await svc.set_feedback(message_id, fb, user_id=current_user.id)
+    return MessageResponse.model_validate(msg)
+
+
 @router.post("/conversations/{conversation_id}/update", response_model=ConversationResponse)
 async def update_conversation(
     agent_id: uuid.UUID,

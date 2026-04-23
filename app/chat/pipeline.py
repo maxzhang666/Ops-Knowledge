@@ -393,6 +393,32 @@ async def _run_rag_pipeline_inner(
             metadata_=metadata,
             token_usage=token_usage,
         )
+
+        # Plan 32 M1.4 — record adopted events for each cited chunk so
+        # dynamic scoring sees which chunks the LLM actually used.
+        try:
+            from app.knowledge.governance.events import record_adopted
+            adopted_pairs: list[tuple[uuid.UUID, uuid.UUID]] = []
+            for src in cited_sources:
+                cid = src.get("chunk_id")
+                if not cid:
+                    continue
+                chunk_entry = next((c for c in chunks if c.get("chunk_id") == cid), None)
+                kb_raw = chunk_entry.get("source_kb_id") if chunk_entry else None
+                if not kb_raw:
+                    continue
+                try:
+                    adopted_pairs.append((uuid.UUID(cid), uuid.UUID(str(kb_raw))))
+                except Exception:
+                    continue
+            if adopted_pairs:
+                await record_adopted(
+                    db_session, adopted_pairs,
+                    message_id=assistant_msg.id, user_id=user_id,
+                )
+        except Exception:
+            logger.debug("adopted_events_failed", exc_info=True)
+
         await db_session.commit()
 
         yield ("message_end", {

@@ -112,13 +112,24 @@ class RetrievalService:
                 query_used, results, reranker_provider_id, reranker_model_name, top_n=top_k,
             )
 
-        # 5. Increment hit_count for actual returned chunks (best-effort, non-blocking failure).
+        # 5. Increment hit_count + emit governance events (Plan 32 M1.3).
         #    Uses a short dedicated session so retrieval path doesn't couple to caller's tx.
+        #    hit_count is a rollup counter (kept for fast queries); the canonical
+        #    record is in chunk_usage_events (event_type=hit) for time-window aggregation.
         if results:
             try:
                 from sqlalchemy import update
+                from app.knowledge.governance.events import record_hits_bulk
                 from app.knowledge.models import Chunk
-                hit_ids = [uuid.UUID(r.chunk_id) for r in results if r.chunk_id]
+                hit_ids: list[uuid.UUID] = []
+                hit_pairs: list[tuple[uuid.UUID, uuid.UUID]] = []
+                for r in results:
+                    if not r.chunk_id:
+                        continue
+                    cid = uuid.UUID(r.chunk_id)
+                    hit_ids.append(cid)
+                    if r.source_kb_id:
+                        hit_pairs.append((cid, uuid.UUID(r.source_kb_id)))
                 if hit_ids:
                     async with async_session() as hit_db:
                         await hit_db.execute(
@@ -126,9 +137,20 @@ class RetrievalService:
                             .where(Chunk.id.in_(hit_ids))
                             .values(hit_count=Chunk.hit_count + 1)
                         )
+                        await record_hits_bulk(hit_db, hit_pairs)
                         await hit_db.commit()
             except Exception:
                 logger.debug("hit_count_update_failed", exc_info=True)
+        else:
+            # No-result path — Plan 32 M1.3 "knowledge gap" data source.
+            try:
+                from app.knowledge.governance.events import record_no_result
+                async with async_session() as gap_db:
+                    for kid in kb_ids:
+                        await record_no_result(gap_db, kb_id=uuid.UUID(str(kid)), query=query_used)
+                    await gap_db.commit()
+            except Exception:
+                logger.debug("no_result_event_failed", exc_info=True)
 
         elapsed = int((time.monotonic() - t0) * 1000)
         logger.info(
