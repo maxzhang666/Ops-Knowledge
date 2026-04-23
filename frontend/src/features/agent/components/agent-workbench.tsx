@@ -57,6 +57,17 @@ export function AgentWorkbench({ agent, onUpdated, onDeleted }: AgentWorkbenchPr
   const activeMenu = valid ? requested : defaultMenu
   const [menuCollapsed, setMenuCollapsed] = useState(false)
 
+  // Plan 31 N2.14 — Workflow editor needs lots of canvas; ?fullscreen=1
+  // hides the left PreviewChat + AgentMenu and gives the active panel
+  // the whole screen. Currently only Orchestrator Workflows panel opts in.
+  const isFullscreen = searchParams.get("fullscreen") === "1"
+  function toggleFullscreen() {
+    const next = new URLSearchParams(searchParams)
+    if (isFullscreen) next.delete("fullscreen")
+    else next.set("fullscreen", "1")
+    setSearchParams(next, { replace: true })
+  }
+
   function selectMenu(id: string) {
     const next = new URLSearchParams(searchParams)
     next.set("menu", id)
@@ -92,13 +103,30 @@ export function AgentWorkbench({ agent, onUpdated, onDeleted }: AgentWorkbenchPr
       case "traces":
         return <TracesPanel agent={agent} />
       case "workflows":
-        return <WorkflowsPanel agent={agent} onUpdated={onUpdated} />
+        return (
+          <WorkflowsPanel
+            agent={agent}
+            onUpdated={onUpdated}
+            fullscreen={isFullscreen}
+            onToggleFullscreen={toggleFullscreen}
+          />
+        )
       default: {
         const item = findMenuItem(activeMenu)
         if (item && item.phase) return <PlaceholderPanel item={item} />
         return <PlaceholderPanel item={findMenuItem(defaultMenu)!} />
       }
     }
+  }
+
+  // Fullscreen mode — hide PreviewChat + AgentMenu, render active panel only.
+  // Only supported by panels that expose their own "exit fullscreen" control.
+  if (isFullscreen && activeMenu === "workflows") {
+    return (
+      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-lg border bg-card">
+        {renderPanel()}
+      </div>
+    )
   }
 
   return (

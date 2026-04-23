@@ -12,7 +12,9 @@
  * without navigating away.
  */
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Plus, Trash2, FileCode2 } from "lucide-react"
+import {
+  Plus, Trash2, FileCode2, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import type { Agent } from "@/api/agent"
@@ -31,7 +33,18 @@ import { WorkflowEditor } from "@/features/workflow/editor"
 import { cn } from "@/lib/utils"
 
 
-export function WorkflowsPanel({ agent, onUpdated }: { agent: Agent; onUpdated?: () => void }) {
+interface WorkflowsPanelProps {
+  agent: Agent
+  onUpdated?: () => void
+  /** Plan 31 N2.14 — 全屏模式下隐藏 Agent workbench 左栏（PreviewChat + Menu），
+   * 给 WorkflowEditor 整屏宽度。由 AgentWorkbench 注入。 */
+  fullscreen?: boolean
+  onToggleFullscreen?: () => void
+}
+
+export function WorkflowsPanel({
+  agent, onUpdated, fullscreen = false, onToggleFullscreen,
+}: WorkflowsPanelProps) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -108,14 +121,44 @@ export function WorkflowsPanel({ agent, onUpdated }: { agent: Agent; onUpdated?:
 
   return (
     <div className="flex h-full min-h-0">
-      {/* 左侧：Workflow 列表 */}
-      <aside className="flex w-64 shrink-0 flex-col border-r">
-        <div className="flex items-center justify-between border-b px-3 py-2">
-          <span className="text-sm font-semibold">SOP 流程</span>
-          <Button size="sm" variant="ghost" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1 size-3" /> 新建
-          </Button>
+      {/* 左侧：Workflow 列表（可折叠） */}
+      <aside
+        className={cn(
+          "flex shrink-0 flex-col border-r transition-[width] duration-200",
+          listCollapsed ? "w-10" : "w-64",
+        )}
+      >
+        <div className="flex items-center justify-between border-b px-2 py-2">
+          {!listCollapsed && (
+            <>
+              <span className="text-sm font-semibold">SOP 流程</span>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setCreateOpen(true)}>
+                  <Plus className="mr-1 size-3" /> 新建
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setListCollapsed(true)}
+                  className="inline-flex size-7 items-center justify-center rounded hover:bg-muted"
+                  title="折叠列表"
+                >
+                  <PanelLeftClose className="size-3.5" />
+                </button>
+              </div>
+            </>
+          )}
+          {listCollapsed && (
+            <button
+              type="button"
+              onClick={() => setListCollapsed(false)}
+              className="inline-flex size-7 items-center justify-center rounded hover:bg-muted"
+              title="展开列表"
+            >
+              <PanelLeftOpen className="size-3.5" />
+            </button>
+          )}
         </div>
+        {!listCollapsed && (
         <div className="flex-1 overflow-y-auto p-1">
           {workflows.length === 0 ? (
             <p className="p-4 text-center text-xs text-muted-foreground">
@@ -161,10 +204,30 @@ export function WorkflowsPanel({ agent, onUpdated }: { agent: Agent; onUpdated?:
             })
           )}
         </div>
+        )}
       </aside>
 
       {/* 右侧：WorkflowEditor */}
-      <section className="flex min-w-0 flex-1 overflow-hidden">
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Toolbar — 全屏切换 + SOP 名字 */}
+        {onToggleFullscreen && (
+          <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs">
+            <span className="truncate text-muted-foreground">
+              {selectedId
+                ? workflows.find((w) => w.id === selectedId)?.name ?? ""
+                : "请选择左侧 SOP"}
+            </span>
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              className="inline-flex items-center gap-1 rounded px-2 py-0.5 hover:bg-muted"
+              title={fullscreen ? "退出全屏" : "全屏编辑（隐藏左侧预览聊天 + 菜单）"}
+            >
+              {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              {fullscreen ? "退出全屏" : "全屏"}
+            </button>
+          </div>
+        )}
         {selectedId ? (
           <WorkflowEditor workflowId={selectedId} embedded />
         ) : (
