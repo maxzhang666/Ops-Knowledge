@@ -32,6 +32,7 @@ async def record_trace(
     handler_latency_ms: int | None,
     handler_status: str | None,
     tried_rules: list[str] | None,
+    ab_group: str | None = None,
     error: str | None = None,
 ) -> None:
     try:
@@ -53,6 +54,7 @@ async def record_trace(
                 handler_latency_ms=handler_latency_ms,
                 handler_status=handler_status,
                 tried_rules=tried_rules,
+                ab_group=ab_group,
                 error=(error or "")[:2000] if error else None,
             )
             db.add(row)

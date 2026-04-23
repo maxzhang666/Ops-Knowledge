@@ -37,10 +37,21 @@ celery_app.conf.update(
             "task": "app.mcp.tasks.mcp_health_check",
             "schedule": 300.0,  # 5 min; fast enough to catch offline servers
         },
+        "orchestrator-trace-retention": {
+            "task": "app.agent.orchestrator.tasks.trace_retention",
+            "schedule": 86400.0,  # once per day; retention is days-scale
+        },
+        "orchestrator-priority-rebalance": {
+            "task": "app.agent.orchestrator.tasks.priority_rebalance",
+            "schedule": 86400.0,  # daily; rebalance only kicks in on precision collision
+        },
     },
 )
 celery_app.autodiscover_tasks(
-    ["app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system", "app.workflow", "app.mcp"],
+    [
+        "app.knowledge.ingestion", "app.knowledge.embedding", "app.chat", "app.system",
+        "app.workflow", "app.mcp", "app.agent.orchestrator",
+    ],
 )
 
 

@@ -272,6 +272,54 @@ class RuleMetrics(BaseModel):
     avg_latency_ms: int | None
 
 
+class AgentRuleVersionResponse(BaseModel):
+    """Historical rule snapshot (Plan 31 N3.2)."""
+    id: uuid.UUID
+    rule_id: uuid.UUID
+    version: int
+    priority: float
+    is_active: bool
+    match_type: str
+    match_config: dict
+    handler_type: str
+    handler_id: uuid.UUID | None
+    handler_config: dict
+    on_handler_error: str
+    change_note: str | None
+    created_by: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AgentRuleRollbackRequest(BaseModel):
+    """Target a specific prior version to restore. Service bumps version
+    and writes a new snapshot tagged with change_note = 'rollback to vN'."""
+    version: int = Field(..., ge=1)
+    change_note: str | None = Field(None, max_length=500)
+
+
+# ── Analytics (N3.6) ─────────────────────────────────────────────
+
+class RuleAnalyticsRow(BaseModel):
+    rule_id: uuid.UUID
+    hit_count: int
+    success_count: int
+    error_count: int
+    fallback_next_count: int
+    avg_latency_ms: float | None
+    p95_latency_ms: int | None
+    ab_split: dict[str, int]
+
+
+class ClassifierAnalytics(BaseModel):
+    total_classifications: int
+    cache_hit_rate: float
+    avg_confidence: float | None
+    category_distribution: dict[str, int]
+    low_confidence_count: int
+
+
 # ── helpers ──────────────────────────────────────────────────────
 
 def _flags_to_re(flags: str) -> int:

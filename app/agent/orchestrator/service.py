@@ -8,6 +8,7 @@ the configured default_handler; ``return_error`` surfaces to user.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -17,22 +18,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.models import Agent
-from app.agent.orchestrator import audit, engine
+from app.agent.orchestrator import audit, cache, engine
 from app.agent.orchestrator.adapters import DispatchContext
 from app.agent.orchestrator.dispatcher import dispatch_default, dispatch_matched
 from app.agent.orchestrator.events import OrchestratorEvent
 from app.agent.orchestrator.matchers.base import MatchInput
 from app.agent.orchestrator.matchers.llm_intent import classify
 from app.agent.orchestrator.metadata import assert_path_trusted, build_metadata
-from app.agent.orchestrator.models import AgentRule
+from app.agent.orchestrator.models import AgentRule, AgentRuleVersion, OrchestratorTrace
 from app.agent.orchestrator.schemas import (
     DEFAULT_DIAG_ROLES,
     DEFAULT_TRUSTED_PATHS,
     AgentRuleCreate,
     AgentRuleMove,
+    AgentRuleRollbackRequest,
     AgentRuleUpdate,
+    ClassifierAnalytics,
     ClassifierTestResult,
     OrchestratorConfig,
+    RuleAnalyticsRow,
 )
 from app.core.database import async_session
 from app.core.exceptions import NotFoundError, ValidationError
@@ -40,6 +44,24 @@ from app.core.exceptions import NotFoundError, ValidationError
 logger = structlog.get_logger(__name__)
 
 PRIORITY_STEP = 10.0  # default spacing when appending to end
+
+
+def _ab_group_for(
+    user_id: uuid.UUID | None, agent_id: uuid.UUID,
+) -> str | None:
+    """Plan 31 N3.3 — stable A/B split.
+
+    Hash(user_id + agent_id) so the SAME user always gets the same group
+    on this Agent (can't jump between A/B mid-conversation), but two
+    different Agents get independent splits (Agent-scoped experiment).
+
+    Returns None when user_id is absent (e.g. ad-hoc API calls without
+    an authenticated session) so admin probing doesn't skew the split.
+    """
+    if user_id is None:
+        return None
+    digest = hashlib.sha1(f"{user_id}:{agent_id}".encode("utf-8")).digest()
+    return "A" if digest[0] % 2 == 0 else "B"
 
 
 class OrchestratorService:
@@ -87,11 +109,86 @@ class OrchestratorService:
         )
         self.db.add(rule)
         await self.db.flush()
+        # Plan 31 N3.2 — seed v1 snapshot so rollback lineage starts from creation
+        await self._write_version_snapshot(rule, user_id=created_by, change_note="initial")
+        await self.db.flush()
         await self.db.refresh(rule)
+        cache.invalidate(agent_id)  # N3.4
         return rule
 
+    async def list_rule_versions(
+        self, agent_id: uuid.UUID, rule_id: uuid.UUID,
+    ) -> list[AgentRuleVersion]:
+        await self._get_rule(agent_id, rule_id)  # ownership check
+        rows = (await self.db.execute(
+            select(AgentRuleVersion)
+            .where(AgentRuleVersion.rule_id == rule_id)
+            .order_by(AgentRuleVersion.version.desc())
+        )).scalars().all()
+        return list(rows)
+
+    async def rollback_rule(
+        self,
+        agent_id: uuid.UUID,
+        rule_id: uuid.UUID,
+        data: AgentRuleRollbackRequest,
+        user_id: uuid.UUID,
+    ) -> AgentRule:
+        """Restore rule state to a prior version. Writes a NEW snapshot so
+        the rollback itself is auditable (never destroys history)."""
+        rule = await self._get_rule(agent_id, rule_id)
+        target = (await self.db.execute(
+            select(AgentRuleVersion).where(
+                AgentRuleVersion.rule_id == rule_id,
+                AgentRuleVersion.version == data.version,
+            )
+        )).scalar_one_or_none()
+        if target is None:
+            raise NotFoundError("AgentRuleVersion", f"rule={rule_id} version={data.version}")
+
+        # Copy config-layer fields from snapshot (hit stats stay live)
+        rule.priority = target.priority
+        rule.is_active = target.is_active
+        rule.match_type = target.match_type
+        rule.match_config = target.match_config
+        rule.handler_type = target.handler_type
+        rule.handler_id = target.handler_id
+        rule.handler_config = target.handler_config
+        rule.on_handler_error = target.on_handler_error
+        rule.version = (rule.version or 1) + 1
+        note = data.change_note or f"rollback to v{data.version}"
+        await self._write_version_snapshot(rule, user_id=user_id, change_note=note)
+        await self.db.flush()
+        await self.db.refresh(rule)
+        cache.invalidate(agent_id)  # N3.4
+        return rule
+
+    async def _write_version_snapshot(
+        self, rule: AgentRule, *, user_id: uuid.UUID | None, change_note: str | None,
+    ) -> None:
+        snap = AgentRuleVersion(
+            rule_id=rule.id,
+            version=rule.version,
+            priority=rule.priority,
+            is_active=rule.is_active,
+            match_type=rule.match_type,
+            match_config=rule.match_config,
+            handler_type=rule.handler_type,
+            handler_id=rule.handler_id,
+            handler_config=rule.handler_config,
+            on_handler_error=rule.on_handler_error,
+            change_note=change_note,
+            created_by=user_id,
+        )
+        self.db.add(snap)
+
     async def update_rule(
-        self, agent_id: uuid.UUID, rule_id: uuid.UUID, data: AgentRuleUpdate,
+        self,
+        agent_id: uuid.UUID,
+        rule_id: uuid.UUID,
+        data: AgentRuleUpdate,
+        user_id: uuid.UUID | None = None,
+        change_note: str | None = None,
     ) -> AgentRule:
         rule = await self._get_rule(agent_id, rule_id)
         payload = data.model_dump(exclude_unset=True)
@@ -107,14 +204,18 @@ class OrchestratorService:
         for k, v in payload.items():
             setattr(rule, k, v)
         rule.version = (rule.version or 1) + 1
+        # Plan 31 N3.2 — snapshot the newly-saved state
+        await self._write_version_snapshot(rule, user_id=user_id, change_note=change_note)
         await self.db.flush()
         await self.db.refresh(rule)
+        cache.invalidate(agent_id)  # N3.4
         return rule
 
     async def delete_rule(self, agent_id: uuid.UUID, rule_id: uuid.UUID) -> None:
         rule = await self._get_rule(agent_id, rule_id)
         await self.db.delete(rule)
         await self.db.flush()
+        cache.invalidate(agent_id)  # N3.4
 
     async def move_rule(
         self, agent_id: uuid.UUID, rule_id: uuid.UUID, move: AgentRuleMove,
@@ -150,6 +251,7 @@ class OrchestratorService:
         rule.priority = new_prio
         await self.db.flush()
         await self.db.refresh(rule)
+        cache.invalidate(agent_id)  # N3.4
         return rule
 
     # ── Agent config ─────────────────────────────────────────────
@@ -215,8 +317,8 @@ class OrchestratorService:
             caller_metadata=metadata,
         )
 
-        # Load active rules; evaluate
-        rules = await self._active_rules(agent.id)
+        # Load active rules (N3.4 cache-backed)
+        rules = await self._active_rules(agent.id, agent=agent)
         msg_input = MatchInput(
             message=user_message,
             metadata=md,
@@ -233,6 +335,10 @@ class OrchestratorService:
             db_factory=async_session,
             metadata=md,
         )
+
+        # Plan 31 N3.3 — stable A/B group per (user, agent). Written into
+        # every trace row so analytics can compare group outcomes.
+        ab_group = _ab_group_for(user_id, agent.id)
 
         # ── Cascade with fallback_next support ───────────────────
         skip: list[str] = []
@@ -284,6 +390,7 @@ class OrchestratorService:
                     handler_latency_ms=outcome.handler_latency_ms,
                     handler_status=outcome.handler_status,
                     tried_rules=decision.tried_rule_ids,
+                    ab_group=ab_group,
                     error=outcome.error,
                 )
 
@@ -326,19 +433,143 @@ class OrchestratorService:
                 "fallback_default" if skip else outcome.handler_status
             ),
             tried_rules=None,
+            ab_group=ab_group,
             error=outcome.error,
+        )
+
+    # ── Analytics (N3.6) ─────────────────────────────────────────
+
+    async def rules_analytics(
+        self, agent_id: uuid.UUID, since_days: int,
+    ) -> list[RuleAnalyticsRow]:
+        """Aggregate orchestrator_traces into per-rule metrics over the last N days.
+
+        Skips the default_handler rows (matched_rule_id IS NULL) — those are
+        surfaced separately via the classifier / fallback columns if needed.
+        """
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        stmt = (
+            select(OrchestratorTrace)
+            .where(
+                OrchestratorTrace.agent_id == agent_id,
+                OrchestratorTrace.created_at >= cutoff,
+                OrchestratorTrace.matched_rule_id.isnot(None),
+            )
+        )
+        rows = (await self.db.execute(stmt)).scalars().all()
+
+        buckets: dict[uuid.UUID, dict] = {}
+        latency_samples: dict[uuid.UUID, list[int]] = {}
+        for r in rows:
+            rid = r.matched_rule_id
+            assert rid is not None  # guarded by where-clause
+            b = buckets.setdefault(rid, {
+                "hit_count": 0, "success_count": 0, "error_count": 0,
+                "fallback_next_count": 0,
+                "ab_split": {"A": 0, "B": 0, "null": 0},
+                "total_latency": 0,
+                "latency_samples": 0,
+            })
+            b["hit_count"] += 1
+            if r.handler_status == "ok":
+                b["success_count"] += 1
+            elif r.handler_status == "error":
+                b["error_count"] += 1
+            elif r.handler_status == "fallback_next":
+                b["fallback_next_count"] += 1
+            key = r.ab_group if r.ab_group in ("A", "B") else "null"
+            b["ab_split"][key] += 1
+            if r.handler_latency_ms is not None:
+                b["total_latency"] += r.handler_latency_ms
+                b["latency_samples"] += 1
+                latency_samples.setdefault(rid, []).append(r.handler_latency_ms)
+
+        result: list[RuleAnalyticsRow] = []
+        for rid, b in buckets.items():
+            samples = sorted(latency_samples.get(rid, []))
+            p95 = samples[int(len(samples) * 0.95)] if samples else None
+            if p95 is not None and int(len(samples) * 0.95) >= len(samples):
+                p95 = samples[-1]
+            avg = (b["total_latency"] / b["latency_samples"]) if b["latency_samples"] else None
+            result.append(RuleAnalyticsRow(
+                rule_id=rid,
+                hit_count=b["hit_count"],
+                success_count=b["success_count"],
+                error_count=b["error_count"],
+                fallback_next_count=b["fallback_next_count"],
+                avg_latency_ms=avg,
+                p95_latency_ms=p95,
+                ab_split=b["ab_split"],
+            ))
+        result.sort(key=lambda x: x.hit_count, reverse=True)
+        return result
+
+    async def classifier_analytics(
+        self, agent_id: uuid.UUID, since_days: int,
+    ) -> ClassifierAnalytics:
+        """Classifier hit rate + confidence distribution."""
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        rows = (await self.db.execute(
+            select(OrchestratorTrace).where(
+                OrchestratorTrace.agent_id == agent_id,
+                OrchestratorTrace.created_at >= cutoff,
+                OrchestratorTrace.llm_classifier_category.isnot(None),
+            )
+        )).scalars().all()
+
+        total = len(rows)
+        cached = sum(1 for r in rows if r.llm_classifier_cached)
+        confidences = [r.llm_classifier_confidence for r in rows if r.llm_classifier_confidence is not None]
+
+        # "low confidence" = below the agent's configured threshold (fallback to 0.6)
+        agent = await self.db.get(Agent, agent_id)
+        threshold = 0.6
+        if agent and agent.orchestrator_config:
+            cls_cfg = agent.orchestrator_config.get("classifier") or {}
+            threshold = float(cls_cfg.get("confidence_threshold", 0.6))
+
+        categories: dict[str, int] = {}
+        low = 0
+        for r in rows:
+            cat = r.llm_classifier_category or "__unknown__"
+            categories[cat] = categories.get(cat, 0) + 1
+            if (r.llm_classifier_confidence or 0.0) < threshold:
+                low += 1
+
+        return ClassifierAnalytics(
+            total_classifications=total,
+            cache_hit_rate=(cached / total) if total else 0.0,
+            avg_confidence=(sum(confidences) / len(confidences)) if confidences else None,
+            category_distribution=categories,
+            low_confidence_count=low,
         )
 
     # ── Helpers ──────────────────────────────────────────────────
 
-    async def _active_rules(self, agent_id: uuid.UUID) -> list[AgentRule]:
+    async def _active_rules(
+        self, agent_id: uuid.UUID, agent: Agent | None = None,
+    ) -> list[AgentRule]:
+        # Plan 31 N3.4 — in-memory cache keyed on agent.updated_at.
+        # SQLAlchemy onupdate=func.now() bumps updated_at on any agent write,
+        # and Agent edits that matter (orchestrator_config changes) always
+        # go through Agent update paths. Rule CRUD doesn't bump Agent's
+        # updated_at itself, so service.create_rule/update/delete/move
+        # explicitly call cache.invalidate below.
+        if agent is not None:
+            cached = cache.get_cached_rules(agent_id, agent.updated_at)
+            if cached is not None:
+                return cached
         stmt = (
             select(AgentRule)
             .where(AgentRule.agent_id == agent_id, AgentRule.is_active.is_(True))
             .order_by(AgentRule.priority.asc())
         )
-        rows = (await self.db.execute(stmt)).scalars().all()
-        return list(rows)
+        rows = list((await self.db.execute(stmt)).scalars().all())
+        if agent is not None:
+            cache.put_cached_rules(agent_id, agent.updated_at, rows)
+        return rows
 
     async def _get_rule(self, agent_id: uuid.UUID, rule_id: uuid.UUID) -> AgentRule:
         rule = await self.db.get(AgentRule, rule_id)

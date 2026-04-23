@@ -18,11 +18,15 @@ from app.agent.orchestrator.schemas import (
     AgentRuleCreate,
     AgentRuleMove,
     AgentRuleResponse,
+    AgentRuleRollbackRequest,
     AgentRuleUpdate,
+    AgentRuleVersionResponse,
+    ClassifierAnalytics,
     ClassifierTestRequest,
     ClassifierTestResult,
     OrchestratorConfig,
     OrchestratorTraceResponse,
+    RuleAnalyticsRow,
     RuleMetrics,
 )
 from app.agent.orchestrator.service import OrchestratorService
@@ -91,7 +95,40 @@ async def update_rule(
     await _assert_can_manage(agent_id, current_user, db)
     svc = OrchestratorService(db)
     try:
-        return await svc.update_rule(agent_id, rule_id, data)
+        return await svc.update_rule(agent_id, rule_id, data, user_id=current_user.id)
+    except AppError as e:
+        raise HTTPException(e.status_code, e.message)
+
+
+# ── Version history (Plan 31 N3.2) ───────────────────────────────
+
+@router.get("/rules/{rule_id}/versions", response_model=list[AgentRuleVersionResponse])
+async def list_rule_versions(
+    agent_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    await _assert_can_manage(agent_id, current_user, db)
+    svc = OrchestratorService(db)
+    try:
+        return await svc.list_rule_versions(agent_id, rule_id)
+    except AppError as e:
+        raise HTTPException(e.status_code, e.message)
+
+
+@router.post("/rules/{rule_id}/rollback", response_model=AgentRuleResponse)
+async def rollback_rule(
+    agent_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    data: AgentRuleRollbackRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    await _assert_can_manage(agent_id, current_user, db)
+    svc = OrchestratorService(db)
+    try:
+        return await svc.rollback_rule(agent_id, rule_id, data, user_id=current_user.id)
     except AppError as e:
         raise HTTPException(e.status_code, e.message)
 
@@ -198,3 +235,31 @@ async def rules_metrics(
         )
         for r in rows
     ]
+
+
+# ── Analytics (Plan 31 N3.6) ─────────────────────────────────────
+
+@router.get("/analytics/rules", response_model=list[RuleAnalyticsRow])
+async def rules_analytics(
+    agent_id: uuid.UUID,
+    current_user: CurrentUser,
+    since_days: int = 7,
+    db: AsyncSession = Depends(get_db),
+):
+    await _assert_can_manage(agent_id, current_user, db)
+    since_days = max(1, min(since_days, 90))
+    svc = OrchestratorService(db)
+    return await svc.rules_analytics(agent_id, since_days)
+
+
+@router.get("/analytics/classifier", response_model=ClassifierAnalytics)
+async def classifier_analytics(
+    agent_id: uuid.UUID,
+    current_user: CurrentUser,
+    since_days: int = 7,
+    db: AsyncSession = Depends(get_db),
+):
+    await _assert_can_manage(agent_id, current_user, db)
+    since_days = max(1, min(since_days, 90))
+    svc = OrchestratorService(db)
+    return await svc.classifier_analytics(agent_id, since_days)

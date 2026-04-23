@@ -88,7 +88,7 @@ async def test_rule_hit_dispatches_and_audits(clean_invocations, patched_env):
     )
 
     # Stub _active_rules to return our rules
-    async def _stub_active(self, agent_id):
+    async def _stub_active(self, agent_id, agent=None):
         return rules
 
     from app.agent.orchestrator.service import OrchestratorService
@@ -141,7 +141,7 @@ async def test_no_match_goes_to_default(clean_invocations, patched_env):
 
     rules = [_rule(1.0, "keyword", {"any_of": ["nope"]})]
 
-    async def _stub_active(self, agent_id):
+    async def _stub_active(self, agent_id, agent=None):
         return rules
 
     OrchestratorService._active_rules = _stub_active  # type: ignore[attr-defined]

@@ -80,3 +80,33 @@ class OrchestratorTrace(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
+
+
+class AgentRuleVersion(Base, UUIDMixin):
+    """Rule snapshot written on each edit (Plan 31 N3.1).
+
+    Only config-layer fields are snapshotted — not hit_count / avg_latency
+    which belong to the runtime. Rollback copies a snapshot's fields
+    back onto the live AgentRule row and bumps a new version.
+    """
+    __tablename__ = "agent_rule_versions"
+
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_rules.id", ondelete="CASCADE"), nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    priority: Mapped[float] = mapped_column(Float(precision=53), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    match_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    match_config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    handler_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    handler_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    handler_config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    on_handler_error: Mapped[str] = mapped_column(String(20), nullable=False)
+    change_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
