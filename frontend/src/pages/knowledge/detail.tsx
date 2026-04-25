@@ -9,11 +9,11 @@ import { DocumentList } from "@/features/knowledge/components/document-list"
 import { DocumentDetailPanel } from "@/features/knowledge/components/document-detail-panel"
 import { ConfigTab } from "@/features/knowledge/components/config-tab"
 import { RetrievalTestTab } from "@/features/knowledge/components/retrieval-test-tab"
-import { QualityOverviewTab } from "@/features/knowledge/components/quality-overview-tab"
+import { GovernanceTab } from "@/features/knowledge/components/governance-tab"
 import { knowledgeApi, type KnowledgeBase, type Folder } from "@/api/knowledge"
 import { useKnowledgeStore } from "@/stores/knowledge"
 
-const VALID_TABS = ["documents", "config", "retrieval", "quality"] as const
+const VALID_TABS = ["documents", "config", "retrieval", "governance"] as const
 type TabValue = typeof VALID_TABS[number]
 
 export default function KBDetailPage() {
@@ -91,7 +91,7 @@ export default function KBDetailPage() {
           <TabsTrigger value="documents">文档</TabsTrigger>
           <TabsTrigger value="config">配置</TabsTrigger>
           <TabsTrigger value="retrieval">检索测试</TabsTrigger>
-          <TabsTrigger value="quality">质量概览</TabsTrigger>
+          <TabsTrigger value="governance">治理</TabsTrigger>
         </TabsList>
 
         {/* Documents tab — three-pane master-detail layout */}
@@ -141,8 +141,8 @@ export default function KBDetailPage() {
           <RetrievalTestTab kbId={kb.id} kbIndexed={(kb.chunk_count ?? 0) > 0} />
         </TabsContent>
 
-        <TabsContent value="quality" className="mt-4 min-h-0 flex-1 overflow-y-auto">
-          <QualityOverviewTab kb={kb} />
+        <TabsContent value="governance" className="mt-4 min-h-0 flex-1 overflow-y-auto">
+          <GovernanceTab kb={kb} />
         </TabsContent>
       </Tabs>
     </div>

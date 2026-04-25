@@ -49,11 +49,30 @@ celery_app.conf.update(
             "task": "app.knowledge.governance.tasks.chunk_score_rebuild",
             "schedule": 300.0,  # 5 min — Plan 32 M1.6 near-realtime dynamic score
         },
+        "governance-alert-publish": {
+            "task": "app.knowledge.governance.tasks.governance_alert_publish_daily",
+            "schedule": 86400.0,  # daily — Plan 27 M1 publish alerts to event bus
+        },
+        "document-lifecycle": {
+            "task": "app.knowledge.lifecycle.tasks.document_lifecycle",
+            "schedule": 86400.0,  # daily — Plan 32 M3 stale detection + auto-archive
+        },
+        "redundancy-scan": {
+            "task": "app.knowledge.coverage.tasks.redundancy_scan",
+            "schedule": 86400.0,  # daily — Plan 26 M1 Layer 5 redundancy detection
+        },
+        "topic-distribution-scan": {
+            "task": "app.knowledge.coverage.tasks.topic_distribution_scan",
+            "schedule": 86400.0,  # daily — Plan 26 T2 Layer 5 topic clustering
+        },
     },
 )
 celery_app.autodiscover_tasks(
     [
-        "app.knowledge.ingestion", "app.knowledge.embedding", "app.knowledge.governance",
+        "app.knowledge.ingestion", "app.knowledge.embedding",
+        "app.knowledge.governance", "app.knowledge.lifecycle",
+        "app.knowledge.evaluation", "app.knowledge.chunking",
+        "app.knowledge.coverage",
         "app.chat", "app.system",
         "app.workflow", "app.mcp", "app.agent.orchestrator",
     ],

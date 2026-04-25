@@ -106,6 +106,11 @@ class RetrievalService:
                 pass
         total_searched = len(results)
 
+        # 3.5 Plan 32 M3 生命周期：剔除归档文档的 chunk。
+        #     Milvus 不知道 is_archived，归档信号只在 SQL 侧。
+        if results:
+            results = await self._filter_archived(results)
+
         # 4. Optional rerank
         if reranker_provider_id and reranker_model_name and results:
             results = await rerank_results(
@@ -176,3 +181,34 @@ class RetrievalService:
             timing_ms=elapsed,
             total_searched=total_searched,
         )
+
+    async def _filter_archived(self, results: list[SearchResult]) -> list[SearchResult]:
+        """剔除归档文档的 chunk；失败时保守通过（不让治理故障阻断检索）。"""
+        doc_ids: set[uuid.UUID] = set()
+        for r in results:
+            if r.document_id:
+                try:
+                    doc_ids.add(uuid.UUID(r.document_id))
+                except Exception:
+                    continue
+        if not doc_ids:
+            return results
+        try:
+            from sqlalchemy import select as _select
+            from app.knowledge.models import Document
+            async with async_session() as db:
+                rows = (await db.execute(
+                    _select(Document.id).where(
+                        Document.id.in_(doc_ids),
+                        Document.is_archived.is_(True),
+                    )
+                )).scalars().all()
+            archived = {str(d) for d in rows}
+            if archived:
+                filtered = [r for r in results if r.document_id not in archived]
+                logger.debug("retrieval_archive_filtered", dropped=len(results) - len(filtered))
+                return filtered
+            return results
+        except Exception:
+            logger.debug("retrieval_archive_filter_failed", exc_info=True)
+            return results

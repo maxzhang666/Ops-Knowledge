@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react"
-import { Download, Move, RefreshCcw, Trash2, Archive } from "lucide-react"
+import { ArchiveRestore, Clock, Download, Move, RefreshCcw, Trash2, Archive } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LoadingSpinner } from "@/components/shared/loading-spinner"
 import { TimeDisplay } from "@/components/shared/time-display"
-import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { DocumentStatusBadge } from "./document-status-badge"
 import { ProcessingProgress } from "./processing-progress"
 import { ChunkViewer } from "./chunk-viewer"
 import { DocumentPreview } from "./document-preview"
+import { ImpactPreviewDialog } from "./impact-preview-dialog"
 
 const PREVIEWABLE_TYPES = new Set(["markdown", "txt", "csv"])
 import { knowledgeApi, type Document } from "@/api/knowledge"
@@ -30,7 +30,7 @@ interface DocumentDetailPanelProps {
 export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: DocumentDetailPanelProps) {
   const [doc, setDoc] = useState<Document | null>(null)
   const [initLoading, setInitLoading] = useState(true)
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [impactAction, setImpactAction] = useState<"delete" | "archive" | "restore" | null>(null)
 
   // Silent reload — does NOT flip `initLoading`, so the view keeps rendering
   // the current doc + chunks while the refresh happens in the background.
@@ -63,6 +63,12 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
     onClosed()
   }
 
+  async function handleArchiveToggle(archive: boolean) {
+    await knowledgeApi.archiveDocument(kbId, docId, archive)
+    await reload()
+    onChanged()
+  }
+
   async function handleReprocess() {
     await knowledgeApi.reprocessDocument(kbId, docId)
     await reload()
@@ -91,6 +97,16 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
         </h2>
         <Badge variant="outline" className="uppercase">{doc.source_type}</Badge>
         <DocumentStatusBadge status={doc.status} />
+        {doc.is_stale && (
+          <Badge variant="outline" className="gap-1 text-warning" title={doc.stale_since ?? undefined}>
+            <Clock className="size-3" /> 过期
+          </Badge>
+        )}
+        {doc.is_archived && (
+          <Badge variant="secondary" className="gap-1">
+            <Archive className="size-3" /> 已归档
+          </Badge>
+        )}
         <span className="text-xs text-muted-foreground">
           {formatSize(doc.file_size)} · {doc.chunk_count} 分块 · <TimeDisplay value={doc.updated_at} />
         </span>
@@ -104,10 +120,16 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
           <Button variant="ghost" size="icon-sm" title="移动" disabled>
             <Move className="size-3.5" />
           </Button>
-          <Button variant="ghost" size="icon-sm" title="归档" disabled>
-            <Archive className="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon-sm" title="删除" onClick={() => setConfirmDelete(true)}>
+          {doc.is_archived ? (
+            <Button variant="ghost" size="icon-sm" title="恢复" onClick={() => setImpactAction("restore")}>
+              <ArchiveRestore className="size-3.5" />
+            </Button>
+          ) : (
+            <Button variant="ghost" size="icon-sm" title="归档" onClick={() => setImpactAction("archive")}>
+              <Archive className="size-3.5" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon-sm" title="删除" onClick={() => setImpactAction("delete")}>
             <Trash2 className="size-3.5" />
           </Button>
         </div>
@@ -151,14 +173,18 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
         )}
       </div>
 
-      <ConfirmDialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        title="删除文档"
-        description={`确认删除 "${doc.title}"？此操作不可撤销。`}
-        confirmText="删除"
-        destructive
-        onConfirm={handleDelete}
+      <ImpactPreviewDialog
+        open={impactAction !== null}
+        onOpenChange={(v) => { if (!v) setImpactAction(null) }}
+        kbId={kbId}
+        docId={docId}
+        docTitle={doc.title}
+        action={impactAction ?? "delete"}
+        onConfirm={async () => {
+          if (impactAction === "delete") await handleDelete()
+          else if (impactAction === "archive") await handleArchiveToggle(true)
+          else if (impactAction === "restore") await handleArchiveToggle(false)
+        }}
       />
     </div>
   )

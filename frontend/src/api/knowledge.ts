@@ -62,6 +62,8 @@ export interface Document {
   token_count: number
   position: number
   is_archived: boolean
+  is_stale: boolean
+  stale_since: string | null
   version: number
   processed_at: string | null
   created_by: string
@@ -112,14 +114,60 @@ export interface RetrievalTestResponse {
   indexed: boolean
 }
 
-export interface QualityOverview {
-  chunk_count: number
-  avg_quality: number | null
-  quality_distribution: { high: number; mid: number; low: number; unscored: number }
-  total_hits: number
-  hit_chunk_count: number
-  cold_chunk_count: number
-  top_hit_chunks: Array<{ id: string; hit_count: number; preview: string }>
+// Governance (Plan 32 M2 + Plan 25 Layer 4)
+export type GovernanceFacetKey =
+  | "chunk_quality" | "coverage" | "freshness" | "availability" | "answer_quality"
+export type GovernanceAlertSeverity = "info" | "warning" | "critical"
+export type GovernanceAlertKind =
+  | "stale_docs"
+  | "low_quality_chunks"
+  | "cold_chunks"
+  | "knowledge_gap"
+  | "redundancy"
+
+export interface GovernanceFacet {
+  score: number  // 0-100
+  weight: number  // 0-1
+  detail: Record<string, unknown>
+}
+
+export interface GovernanceAlert {
+  severity: GovernanceAlertSeverity
+  kind: GovernanceAlertKind
+  title: string
+  count: number
+  preview: Array<Record<string, unknown>>
+  action_href: string | null
+}
+
+export interface GovernanceTrendPoint { t: string; v: number }
+
+export interface GovernanceHealth {
+  kb_id: string
+  health_score: number
+  facets: Record<GovernanceFacetKey, GovernanceFacet>
+  alerts: GovernanceAlert[]
+  trend: { hits: GovernanceTrendPoint[]; adopted: GovernanceTrendPoint[] }
+  generated_at: string
+}
+
+export interface GovernanceOverviewItem {
+  kb_id: string
+  kb_name: string
+  health_score: number
+  alerts_critical: number
+  alerts_warning: number
+}
+
+export interface GovernanceOverview {
+  kbs: GovernanceOverviewItem[]
+  avg_health_score: number
+  generated_at: string
+}
+
+export interface KBGovernanceConfig {
+  expiration_threshold_days: number
+  auto_archive_idle_days: number
 }
 
 // --- Request payloads ---
@@ -277,6 +325,23 @@ export const knowledgeApi = {
     return api.post<{ dispatched: number }>(`/knowledge/${kbId}/documents/${docId}/reprocess`)
   },
 
+  // Plan 32 M3 生命周期
+  documentImpact(kbId: string, docId: string) {
+    return api.post<{
+      n_chunks: number
+      hits_7d: number
+      top_frequency_chunks: Array<{ chunk_id: string; preview: string; hits_7d: number }>
+      active_conversations_7d: number
+    }>(`/knowledge/${kbId}/documents/${docId}/impact`)
+  },
+
+  archiveDocument(kbId: string, docId: string, archive: boolean) {
+    return api.post<{ id: string; is_archived: boolean }>(
+      `/knowledge/${kbId}/documents/${docId}/archive`,
+      { archive },
+    )
+  },
+
   downloadDocument(kbId: string, docId: string) {
     return api.downloadBlob(`/knowledge/${kbId}/documents/${docId}/download`)
   },
@@ -321,9 +386,30 @@ export const knowledgeApi = {
     return api.post<RetrievalTestResponse>(`/knowledge/${kbId}/retrieval/test`, data)
   },
 
-  // Quality overview
-  qualityOverview(kbId: string) {
-    return api.get<QualityOverview>(`/knowledge/${kbId}/quality/overview`)
+  // Coverage (Plan 26 Topic Distribution)
+  listTopics(kbId: string) {
+    return api.get<{
+      kb_id: string
+      topics: Array<{
+        cluster_id: number
+        label: string
+        size: number
+        keywords: string[]
+        example_chunk_ids: string[]
+        generated_at: string
+      }>
+    }>(`/knowledge/${kbId}/topics`)
+  },
+
+  // Governance (Plan 32 M2)
+  governance(kbId: string) {
+    return api.get<GovernanceHealth>(`/knowledge/${kbId}/governance`)
+  },
+  governanceOverview() {
+    return api.get<GovernanceOverview>(`/knowledge/governance/overview`)
+  },
+  updateGovernanceConfig(kbId: string, cfg: KBGovernanceConfig) {
+    return api.post<KBGovernanceConfig>(`/knowledge/${kbId}/governance/config`, cfg)
   },
 
   // Export / Import

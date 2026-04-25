@@ -20,8 +20,10 @@ from app.knowledge.chunk_router import router as chunk_router
 from app.knowledge.document_router import router as document_router
 from app.knowledge.export_router import router as export_router
 from app.knowledge.folder_router import router as folder_router
+from app.knowledge.coverage.router import router as kb_coverage_router
+from app.knowledge.evaluation.router import router as evaluation_router
+from app.knowledge.governance.router import router as kb_governance_router
 from app.knowledge.ingestion_router import router as ingestion_router
-from app.knowledge.quality_router import router as quality_router
 from app.knowledge.retrieval_router import router as retrieval_router
 from app.knowledge.router import router as kb_router
 from app.mcp.router import router as mcp_router
@@ -69,6 +71,8 @@ async def lifespan(_app: FastAPI):
     # Side-effect import registers @on handlers BEFORE the subscriber starts,
     # so no events race past an empty handler registry.
     import app.observability.bus_relay  # noqa: F401
+    # Plan 27 M2：governance alert → workflow trigger 需要在 subscriber 启动前注册
+    import app.workflow.governance_trigger  # noqa: F401
     from app.integration.event_bus import start_subscriber as start_event_bus
     _event_bus_task = await start_event_bus()
 
@@ -78,6 +82,15 @@ async def lifespan(_app: FastAPI):
 
     from app.workflow.langgraph.checkpoint import init_checkpointer
     await init_checkpointer()
+
+    # Plan 27 M3 — seed governance workflow templates (idempotent)
+    try:
+        from app.core.database import async_session as async_session_factory
+        from app.workflow.governance_templates import seed_governance_templates
+        async with async_session_factory() as seed_db:
+            await seed_governance_templates(seed_db)
+    except Exception:  # noqa: BLE001
+        pass
 
     await _recover_stuck_tasks()
 
@@ -187,7 +200,9 @@ app.include_router(document_router, prefix=settings.API_V1_PREFIX)
 app.include_router(chunk_router, prefix=settings.API_V1_PREFIX)
 app.include_router(export_router, prefix=settings.API_V1_PREFIX)
 app.include_router(retrieval_router, prefix=settings.API_V1_PREFIX)
-app.include_router(quality_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_governance_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_coverage_router, prefix=settings.API_V1_PREFIX)
+app.include_router(evaluation_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ingestion_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agent_router, prefix=settings.API_V1_PREFIX)

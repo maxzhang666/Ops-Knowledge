@@ -118,6 +118,9 @@ class Document(Base, UUIDMixin, TimestampMixin):
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Plan 32 M3 生命周期：过期标记 + 标记时间戳，驱动自动归档/通知去重
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stale_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(

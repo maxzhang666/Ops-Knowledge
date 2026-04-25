@@ -212,6 +212,135 @@ async def get_document(
     return await doc_svc.get_document(doc_id)
 
 
+# ── Plan 32 M3 影响分析 + 归档切换 ─────────────────────────────
+
+class DocumentImpactResponse(BaseModel):
+    n_chunks: int
+    hits_7d: int                       # 近 7 天 chunk 被命中次数之和
+    top_frequency_chunks: list[dict]   # [{chunk_id, preview, hits_7d}]
+    active_conversations_7d: int       # 近 7 天引用本文档的不同会话数
+
+
+@router.post("/{doc_id}/impact", response_model=DocumentImpactResponse)
+async def document_impact(
+    kb_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """在删除/归档等破坏性操作前展示影响面：chunk 数、近期热度、波及会话。"""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import func as sa_func
+    from app.chat.models import Message
+    from app.knowledge.governance.models import ChunkUsageEvent
+
+    svc = KBService(db)
+    kb = await svc.get_kb(kb_id)
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by)
+
+    doc_svc = DocumentService(db)
+    await doc_svc.get_document(doc_id)  # 404 if missing
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=7)
+
+    chunks = (await db.execute(
+        select(Chunk.id, Chunk.content).where(Chunk.document_id == doc_id)
+    )).all()
+    chunk_ids = [c[0] for c in chunks]
+
+    hits_7d = 0
+    top_rows: list[tuple] = []
+    if chunk_ids:
+        hits_7d = int((await db.execute(
+            select(sa_func.count(ChunkUsageEvent.id)).where(
+                ChunkUsageEvent.chunk_id.in_(chunk_ids),
+                ChunkUsageEvent.event_type == "hit",
+                ChunkUsageEvent.created_at >= since,
+            )
+        )).scalar() or 0)
+        top_rows = (await db.execute(
+            select(
+                ChunkUsageEvent.chunk_id,
+                sa_func.count(ChunkUsageEvent.id).label("n"),
+            )
+            .where(
+                ChunkUsageEvent.chunk_id.in_(chunk_ids),
+                ChunkUsageEvent.event_type == "hit",
+                ChunkUsageEvent.created_at >= since,
+            )
+            .group_by(ChunkUsageEvent.chunk_id)
+            .order_by(sa_func.count(ChunkUsageEvent.id).desc())
+            .limit(5)
+        )).all()
+
+    content_map = {cid: (text or "") for cid, text in chunks}
+    top_frequency = [
+        {
+            "chunk_id": str(row[0]),
+            "preview": content_map.get(row[0], "")[:160],
+            "hits_7d": int(row[1]),
+        }
+        for row in top_rows
+    ]
+
+    # 会话波及 —— message.metadata_.retrieval_chunks 里引用到任一 chunk 的 conversation
+    active_conversations = 0
+    if chunk_ids:
+        id_strs = {str(c) for c in chunk_ids}
+        rows = (await db.execute(
+            select(Message.conversation_id, Message.metadata_).where(
+                Message.metadata_.isnot(None),
+                Message.created_at >= since,
+            )
+        )).all()
+        conv_set: set[uuid.UUID] = set()
+        for conv_id, meta in rows:
+            if not isinstance(meta, dict):
+                continue
+            for ch in (meta.get("retrieval_chunks") or []):
+                if str(ch.get("id") or "") in id_strs:
+                    conv_set.add(conv_id)
+                    break
+        active_conversations = len(conv_set)
+
+    return DocumentImpactResponse(
+        n_chunks=len(chunk_ids),
+        hits_7d=hits_7d,
+        top_frequency_chunks=top_frequency,
+        active_conversations_7d=active_conversations,
+    )
+
+
+class DocumentArchiveBody(BaseModel):
+    archive: bool  # True = archive, False = restore
+
+
+@router.post("/{doc_id}/archive", status_code=status.HTTP_200_OK)
+async def toggle_archive_document(
+    kb_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    body: DocumentArchiveBody,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动归档/恢复文档。归档后 retrieval 自动跳过；恢复则清除 stale 标记。"""
+    svc = KBService(db)
+    kb = await svc.get_kb(kb_id)
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
+
+    doc = await db.get(Document, doc_id)
+    if doc is None or doc.knowledge_base_id != kb_id:
+        raise NotFoundError("Document", str(doc_id))
+    doc.is_archived = body.archive
+    if not body.archive:
+        # 恢复时清除 stale —— 让下一次 lifecycle 扫描重新判定
+        doc.is_stale = False
+        doc.stale_since = None
+    await db.flush()
+    return {"id": str(doc.id), "is_archived": doc.is_archived}
+
+
 class BatchIdsBody(BaseModel):
     ids: list[uuid.UUID]
 

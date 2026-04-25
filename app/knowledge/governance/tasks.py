@@ -1,8 +1,8 @@
-"""Governance Celery tasks (Plan 32 M1.6).
+"""Governance Celery tasks.
 
-- ``chunk_score_rebuild`` (5 min) — find chunks with events in the
-  window, aggregate denorm counters + quality_dynamic + quality_composite.
-- ``events_retention`` (daily) — TODO M4; drop events > 90d.
+- ``chunk_score_rebuild`` (5 min, Plan 32 M1.6) — aggregate denorm counters.
+- ``governance_alert_publish_daily`` (daily, Plan 27 M1) — 扫描所有 active KB
+  的治理告警并 publish 到 event_bus，供 workflow governance_event 触发器订阅。
 """
 from __future__ import annotations
 
@@ -133,5 +133,56 @@ async def _run_chunk_score_rebuild(
 
         logger.info("chunk_score_rebuild_done", dirty=len(dirty_ids), updated=updated)
         return {"dirty": len(dirty_ids), "updated": updated}
+    finally:
+        await engine.dispose()
+
+
+# ── Plan 27 M1 · governance alerts → event bus ────────────────────
+
+@shared_task(name="app.knowledge.governance.tasks.governance_alert_publish_daily")
+def governance_alert_publish_daily() -> dict:
+    """每日扫描 active KB 治理告警并 publish。"""
+    return asyncio.run(_run_alert_publish())
+
+
+async def _run_alert_publish() -> dict:
+    from sqlalchemy import select as _select
+    from app.integration.event_bus import publish as publish_event
+    from app.integration.events import Event
+    from app.knowledge.governance.service import GovernanceService
+    from app.knowledge.models import KnowledgeBase
+
+    engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    sm = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    totals = {"kbs": 0, "alerts": 0}
+    try:
+        async with sm() as db:
+            kbs = (await db.execute(
+                _select(KnowledgeBase).where(KnowledgeBase.status == "active")
+            )).scalars().all()
+            for kb in kbs:
+                svc = GovernanceService(db)
+                try:
+                    health = await svc.compute_health(kb.id)
+                except Exception:
+                    logger.debug("compute_health_failed", kb_id=str(kb.id), exc_info=True)
+                    continue
+                totals["kbs"] += 1
+                for alert in health.alerts:
+                    await publish_event(Event(
+                        name="governance.alert",
+                        source="knowledge",
+                        data={
+                            "kb_id": str(kb.id),
+                            "kb_name": kb.name,
+                            "kind": alert.kind,
+                            "severity": alert.severity,
+                            "count": alert.count,
+                            "title": alert.title,
+                            "preview": alert.preview[:5],
+                        },
+                    ))
+                    totals["alerts"] += 1
+        return totals
     finally:
         await engine.dispose()
