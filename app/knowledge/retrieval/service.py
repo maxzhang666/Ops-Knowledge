@@ -8,7 +8,7 @@ import structlog
 
 from app.core.cache import CacheService
 from app.core.database import async_session
-from app.knowledge.retrieval.query_rewriter import rewrite_query
+from app.knowledge.retrieval.query_rewriter import rewrite_query_v2
 from app.knowledge.retrieval.reranker import rerank_results
 from app.knowledge.retrieval.searcher import HybridSearcher, SearchResult
 from app.model.service import ModelService
@@ -41,6 +41,8 @@ class RetrievalService:
         rewrite_history: list[dict] | None = None,
         rewrite_provider_id: uuid.UUID | None = None,
         rewrite_model_name: str | None = None,
+        rewrite_registry_id: uuid.UUID | None = None,
+        rewrite_memory_summary: str | None = None,
         reranker_provider_id: uuid.UUID | None = None,
         reranker_model_name: str | None = None,
         embedding_model_registry_id: uuid.UUID | None = None,
@@ -72,10 +74,20 @@ class RetrievalService:
         except Exception:
             pass  # cache miss or error, proceed normally
 
-        # 1. Optional query rewrite
-        if rewrite and rewrite_provider_id and rewrite_model_name:
-            query_used = await rewrite_query(
-                query, rewrite_history or [], rewrite_provider_id, rewrite_model_name,
+        # 1. Optional query rewrite (Plan 30 v2 — 启发式 + 结构化输出)
+        if rewrite and (rewrite_registry_id or (rewrite_provider_id and rewrite_model_name)):
+            r = await rewrite_query_v2(
+                query, rewrite_history or [],
+                provider_id=rewrite_provider_id,
+                model_name=rewrite_model_name,
+                registry_id=rewrite_registry_id,
+                memory_summary=rewrite_memory_summary,
+            )
+            query_used = r.query_used
+            logger.info(
+                "retrieval_query_rewrite",
+                original=query, used=r.query_used,
+                needs_rewrite=r.needs_rewrite, status=r.status, reason=r.reason,
             )
 
         # 2. Embed query

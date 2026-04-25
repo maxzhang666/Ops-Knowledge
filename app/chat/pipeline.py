@@ -204,13 +204,20 @@ async def _run_rag_pipeline_inner(
                     "top_k": top_k,
                     "folder_ids": [str(f) for f in folder_ids] if folder_ids else None,
                     "rewrite": r_cfg.get("rewrite", kb_r_cfg.get("rewrite", False)),
-                    # Spec 16 §Query Rewriting: "last 4 messages" as context
-                    "rewrite_history": history[-4:] if r_cfg.get("rewrite", kb_r_cfg.get("rewrite")) else None,
+                    # Plan 30 v2：rewrite_v2 内部裁剪到 8；这里给 8 让长程上下文进入
+                    "rewrite_history": history[-8:] if r_cfg.get("rewrite", kb_r_cfg.get("rewrite")) else None,
                     "rewrite_provider_id": (
                         uuid.UUID(str(r_cfg.get("rewrite_provider_id") or kb_r_cfg.get("rewrite_provider_id", "")))
                         if r_cfg.get("rewrite_provider_id") or kb_r_cfg.get("rewrite_provider_id") else None
                     ),
                     "rewrite_model_name": r_cfg.get("rewrite_model_name") or kb_r_cfg.get("rewrite_model_name"),
+                    "rewrite_registry_id": (
+                        uuid.UUID(str(r_cfg.get("rewrite_registry_id") or kb_r_cfg.get("rewrite_registry_id", "")))
+                        if r_cfg.get("rewrite_registry_id") or kb_r_cfg.get("rewrite_registry_id") else None
+                    ),
+                    # Plan 30 v2：把长期记忆摘要作为 system prefix 进入改写器，
+                    # 让多轮深问 / 跨话题指代也能被改写器看见。
+                    "rewrite_memory_summary": memory_summary or None,
                     "reranker_provider_id": (
                         uuid.UUID(str(r_cfg.get("reranker_provider_id") or kb_r_cfg.get("reranker_provider_id", "")))
                         if r_cfg.get("reranker_provider_id") or kb_r_cfg.get("reranker_provider_id") else None
