@@ -151,6 +151,17 @@ export const workflowApi = {
     return api.post<WorkflowDetail>(`/workflow/${id}/versions/${version}/rollback`)
   },
 
+  // ----- Governance trigger -----
+  listGovernanceHandlers() {
+    return api.get<Array<{
+      id: string
+      name: string
+      description: string | null
+      trigger_type: string
+      status: string
+    }>>("/workflow", { trigger_type: "governance_event", wf_status: "published" })
+  },
+
   // ----- Templates -----
   listTemplates(category?: string) {
     return api.get<Array<{

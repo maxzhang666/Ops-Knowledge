@@ -78,6 +78,9 @@ class WorkflowDSL(BaseModel):
     dsl_version: str = DSL_VERSION
     graph: GraphDef
     workflow_variables: list[WorkflowVariableDef] = Field(default_factory=list)
+    # Plan 27 M2 — 触发配置（按 trigger_type 解读）。
+    #   governance_event: {"kinds": [...], "kb_ids": [...], "severities": [...]}
+    trigger_config: dict[str, Any] = Field(default_factory=dict)
 
 
 NodeDef.model_rebuild()

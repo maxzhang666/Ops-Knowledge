@@ -83,10 +83,16 @@ class WorkflowService:
         page: int = 1,
         page_size: int = 20,
         owner_agent_id: uuid.UUID | None = None,
+        trigger_type: str | None = None,
+        status: str | None = None,
     ) -> list[Workflow]:
         stmt = select(Workflow).order_by(desc(Workflow.updated_at))
         if owner_agent_id is not None:
             stmt = stmt.where(Workflow.owner_agent_id == owner_agent_id)
+        if trigger_type is not None:
+            stmt = stmt.where(Workflow.trigger_type == trigger_type)
+        if status is not None:
+            stmt = stmt.where(Workflow.status == status)
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
         rows = await self.db.execute(stmt)
         return list(rows.scalars().all())

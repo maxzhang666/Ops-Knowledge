@@ -81,10 +81,15 @@ async def list_workflows(
     page: int = 1,
     page_size: int = 20,
     owner_agent_id: uuid.UUID | None = None,
+    trigger_type: str | None = None,
+    wf_status: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     return await WorkflowService(db).list(
-        page=page, page_size=page_size, owner_agent_id=owner_agent_id,
+        page=page, page_size=page_size,
+        owner_agent_id=owner_agent_id,
+        trigger_type=trigger_type,
+        status=wf_status,
     )
 
 
