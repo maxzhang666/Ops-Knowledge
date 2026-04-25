@@ -65,6 +65,10 @@ celery_app.conf.update(
             "task": "app.knowledge.coverage.tasks.topic_distribution_scan",
             "schedule": 86400.0,  # daily — Plan 26 T2 Layer 5 topic clustering
         },
+        "cross-kb-redundancy-scan": {
+            "task": "app.knowledge.coverage.tasks.cross_kb_redundancy_scan",
+            "schedule": 86400.0,  # daily — Plan 31 cross-KB duplication detection
+        },
     },
 )
 celery_app.autodiscover_tasks(

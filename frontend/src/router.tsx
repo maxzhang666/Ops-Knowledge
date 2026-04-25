@@ -21,6 +21,7 @@ import ApiKeysPage from "@/pages/settings/api-keys"
 import SsoSettingsPage from "@/pages/settings/sso"
 import ObservabilityPage from "@/pages/settings/observability"
 import CostsPage from "@/pages/settings/costs"
+import CrossKBPage from "@/pages/settings/cross-kb"
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -53,6 +54,7 @@ export const router = createBrowserRouter([
               { path: "sso", element: <SsoSettingsPage /> },
               { path: "observability", element: <ObservabilityPage /> },
               { path: "costs", element: <CostsPage /> },
+              { path: "cross-kb", element: <CrossKBPage /> },
               { path: "system", element: <SystemPage /> },
               { path: "profile", element: <ProfilePage /> },
               { path: "api-keys", element: <ApiKeysPage /> },

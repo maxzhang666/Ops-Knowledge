@@ -36,6 +36,38 @@ class ChunkRedundancyPair(Base, UUIDMixin):
     )
 
 
+class ChunkCrossKBRedundancyPair(Base, UUIDMixin):
+    """Plan 31 — cross-KB duplication 候选对。
+
+    与 ChunkRedundancyPair 不同的是：
+      - kb_a_id < kb_b_id 满足 ordering（保证一对 KB 只索引一行）
+      - chunk_a_id / chunk_b_id 不强制 a<b（同 KB 内的语义保持开放，
+        因为不同 KB 的 chunk_id 之间 a<b 没有业务含义）
+    """
+    __tablename__ = "chunk_cross_kb_redundancy_pairs"
+    __table_args__ = (
+        UniqueConstraint("chunk_a_id", "chunk_b_id", name="uq_cross_kb_redundancy_ordered_pair"),
+        CheckConstraint("kb_a_id < kb_b_id", name="ck_cross_kb_redundancy_kb_ordering"),
+    )
+
+    kb_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False,
+    )
+    kb_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False,
+    )
+    chunk_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chunks.id", ondelete="CASCADE"), nullable=False,
+    )
+    chunk_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chunks.id", ondelete="CASCADE"), nullable=False,
+    )
+    similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+
 class KBTopic(Base, UUIDMixin):
     __tablename__ = "kb_topics"
     __table_args__ = (

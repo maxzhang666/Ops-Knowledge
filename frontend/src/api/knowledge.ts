@@ -448,6 +448,25 @@ export const knowledgeApi = {
   governanceOverview() {
     return api.get<GovernanceOverview>(`/knowledge/governance/overview`)
   },
+  // Plan 31 — Cross-KB redundancy admin view
+  crossKbRedundancy(limit = 50, minSimilarity = 0.85) {
+    return api.get<{
+      items: Array<{
+        kb_a_id: string
+        kb_a_name: string
+        kb_b_id: string
+        kb_b_name: string
+        chunk_a_id: string
+        chunk_b_id: string
+        similarity: number
+        a_preview: string
+        b_preview: string
+      }>
+    }>(`/knowledge/governance/cross-kb-redundancy`, {
+      limit: String(limit),
+      min_similarity: String(minSimilarity),
+    })
+  },
   updateGovernanceConfig(kbId: string, cfg: KBGovernanceConfig) {
     return api.post<KBGovernanceConfig>(`/knowledge/${kbId}/governance/config`, cfg)
   },

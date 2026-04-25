@@ -139,6 +139,113 @@ def redundancy_scan(kb_id: str | None = None) -> dict:
         engine.dispose()
 
 
+@shared_task(name="app.knowledge.coverage.tasks.cross_kb_redundancy_scan")
+def cross_kb_redundancy_scan(sample_per_kb: int = 300) -> dict:
+    """Plan 31 M2 — 在 active KB 两两间扫描跨库重复。
+
+    采样策略：每 KB 随机取 ``sample_per_kb`` 个 chunk（顺序由 PG hash 自然决定）。
+    对每对 KB 调 ``find_cross_kb_pairs``；写入 ``chunk_cross_kb_redundancy_pairs``。
+    """
+    return asyncio.run(_run_cross_kb_scan(sample_per_kb))
+
+
+async def _run_cross_kb_scan(sample_per_kb: int) -> dict:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.knowledge.coverage.cross_kb import (
+        CROSS_DEFAULT_MAX_PAIRS_PER_KB_PAIR, CROSS_DEFAULT_THRESHOLD,
+        find_cross_kb_pairs,
+    )
+    from app.knowledge.coverage.models import ChunkCrossKBRedundancyPair
+    from app.knowledge.embedding.tasks import _collection_name
+    from app.knowledge.milvus.service import MilvusService
+    from app.knowledge.models import Chunk, KnowledgeBase
+    from app.core.runtime_config import get_sync_runtime_config
+
+    runtime_cfg = get_sync_runtime_config()
+    engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    sm = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
+    totals = {"kb_pairs": 0, "skipped_pairs": 0, "redundancy_pairs": 0}
+    try:
+        async with sm() as db:
+            kbs = (await db.execute(
+                sa.select(KnowledgeBase).where(KnowledgeBase.status == "active")
+            )).scalars().all()
+        if len(kbs) < 2:
+            return totals
+
+        # Pre-fetch each KB's sample vectors
+        sample_cache: dict[str, tuple[list[str], np.ndarray]] = {}
+        for kb in kbs:
+            collection = _collection_name(str(kb.id))
+            if not milvus_svc.collection_exists(collection):
+                continue
+            async with sm() as db:
+                ids = [str(c) for c in (await db.execute(
+                    sa.select(Chunk.id)
+                    .where(
+                        Chunk.knowledge_base_id == kb.id,
+                        Chunk.vector_id.isnot(None),
+                    )
+                    .limit(sample_per_kb)
+                )).scalars().all()]
+            if not ids:
+                continue
+            vec_map = _fetch_vectors(milvus_svc, collection, ids)
+            kept_ids: list[str] = []
+            vectors_list: list[list[float]] = []
+            for cid in ids:
+                v = vec_map.get(cid)
+                if v is None:
+                    continue
+                kept_ids.append(cid)
+                vectors_list.append(v)
+            if len(kept_ids) < 5:
+                continue
+            sample_cache[str(kb.id)] = (kept_ids, np.asarray(vectors_list, dtype=np.float32))
+
+        # Pairwise scan (kb_a < kb_b)
+        kb_ids = sorted(sample_cache.keys())
+        # Truncate the destination table once and rebuild — keeps queries simple
+        async with sm() as db:
+            await db.execute(sa.delete(ChunkCrossKBRedundancyPair))
+            await db.commit()
+        for i in range(len(kb_ids)):
+            for j in range(i + 1, len(kb_ids)):
+                a_id, b_id = kb_ids[i], kb_ids[j]
+                ids_a, vecs_a = sample_cache[a_id]
+                ids_b, vecs_b = sample_cache[b_id]
+                pairs = find_cross_kb_pairs(
+                    ids_a, vecs_a, ids_b, vecs_b,
+                    threshold=CROSS_DEFAULT_THRESHOLD,
+                    max_pairs=CROSS_DEFAULT_MAX_PAIRS_PER_KB_PAIR,
+                )
+                if not pairs:
+                    totals["skipped_pairs"] += 1
+                    continue
+                totals["kb_pairs"] += 1
+                async with sm() as db:
+                    for p in pairs:
+                        db.add(ChunkCrossKBRedundancyPair(
+                            kb_a_id=uuid.UUID(a_id),
+                            kb_b_id=uuid.UUID(b_id),
+                            chunk_a_id=uuid.UUID(p.a_id),
+                            chunk_b_id=uuid.UUID(p.b_id),
+                            similarity=p.similarity,
+                        ))
+                    await db.commit()
+                totals["redundancy_pairs"] += len(pairs)
+                logger.info(
+                    "cross_kb_pair_scan",
+                    kb_a=a_id, kb_b=b_id, pairs=len(pairs),
+                )
+        return totals
+    finally:
+        milvus_svc.close()
+        await engine.dispose()
+
+
 @shared_task(name="app.knowledge.coverage.tasks.topic_distribution_scan")
 def topic_distribution_scan(kb_id: str | None = None) -> dict:
     """Plan 26 T2 — 对一个或全部 active KB 做话题聚类+LLM 标签。"""
