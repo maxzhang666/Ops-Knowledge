@@ -22,6 +22,7 @@ from app.knowledge.export_router import router as export_router
 from app.knowledge.folder_router import router as folder_router
 from app.knowledge.coverage.router import router as kb_coverage_router
 from app.knowledge.evaluation.router import router as evaluation_router
+from app.knowledge.review.router import router as kb_review_router
 from app.knowledge.governance.router import router as kb_governance_router
 from app.knowledge.ingestion_router import router as ingestion_router
 from app.knowledge.retrieval_router import router as retrieval_router
@@ -203,6 +204,7 @@ app.include_router(retrieval_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_governance_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_coverage_router, prefix=settings.API_V1_PREFIX)
 app.include_router(evaluation_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_review_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ingestion_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agent_router, prefix=settings.API_V1_PREFIX)

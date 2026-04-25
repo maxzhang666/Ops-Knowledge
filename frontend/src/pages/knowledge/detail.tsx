@@ -10,10 +10,11 @@ import { DocumentDetailPanel } from "@/features/knowledge/components/document-de
 import { ConfigTab } from "@/features/knowledge/components/config-tab"
 import { RetrievalTestTab } from "@/features/knowledge/components/retrieval-test-tab"
 import { GovernanceTab } from "@/features/knowledge/components/governance-tab"
+import { ReviewTab } from "@/features/knowledge/components/review-tab"
 import { knowledgeApi, type KnowledgeBase, type Folder } from "@/api/knowledge"
 import { useKnowledgeStore } from "@/stores/knowledge"
 
-const VALID_TABS = ["documents", "config", "retrieval", "governance"] as const
+const VALID_TABS = ["documents", "config", "retrieval", "governance", "review"] as const
 type TabValue = typeof VALID_TABS[number]
 
 export default function KBDetailPage() {
@@ -92,6 +93,9 @@ export default function KBDetailPage() {
           <TabsTrigger value="config">配置</TabsTrigger>
           <TabsTrigger value="retrieval">检索测试</TabsTrigger>
           <TabsTrigger value="governance">治理</TabsTrigger>
+          {kb.review_required && (
+            <TabsTrigger value="review">审批</TabsTrigger>
+          )}
         </TabsList>
 
         {/* Documents tab — three-pane master-detail layout */}
@@ -143,6 +147,13 @@ export default function KBDetailPage() {
 
         <TabsContent value="governance" className="mt-4 min-h-0 flex-1 overflow-y-auto">
           <GovernanceTab kb={kb} />
+        </TabsContent>
+
+        <TabsContent value="review" className="mt-4 min-h-0 flex-1 overflow-y-auto">
+          <ReviewTab
+            kb={kb}
+            onPick={(docId) => { setSelectedDoc(docId); setActiveTab("documents") }}
+          />
         </TabsContent>
       </Tabs>
     </div>

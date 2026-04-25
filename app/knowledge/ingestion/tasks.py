@@ -60,6 +60,52 @@ def _create_notification(session, user_id, doc_title: str, success: bool, doc_id
     session.add(notif)
 
 
+def _submit_doc_for_review(session, doc_id: str, kb) -> None:
+    """Plan 29 — sync (Celery) 版的 ReviewService.submit_for_review。
+
+    复用与 ReviewService 相同的逻辑：把 review_status 置 pending，给 KB owner
+    和同部门 DEPT_ADMIN 写 Notification。仅在文档当前 review_status 为空时执行。
+    """
+    from app.department.models import DepartmentRole, UserDepartment
+    from app.system.models import Notification
+
+    doc = session.get(Document, doc_id)
+    if doc is None or doc.review_status is not None:
+        return
+    doc.review_status = "pending"
+    doc.reviewer_id = None
+    doc.reviewed_at = None
+    doc.review_comment = None
+
+    candidates: set = {kb.created_by}
+    dept_ids = session.execute(
+        select(UserDepartment.department_id).where(
+            UserDepartment.user_id == kb.created_by,
+        )
+    ).scalars().all()
+    if dept_ids:
+        admin_rows = session.execute(
+            select(UserDepartment.user_id).distinct().where(
+                UserDepartment.department_id.in_(dept_ids),
+                UserDepartment.role == DepartmentRole.DEPT_ADMIN,
+            )
+        ).scalars().all()
+        candidates.update(admin_rows)
+    targets = [uid for uid in candidates if uid != doc.created_by]
+    if not targets:
+        targets = [doc.created_by]
+    for uid in targets:
+        session.add(Notification(
+            user_id=uid,
+            type="review_pending",
+            title=f"待审批：「{doc.title}」",
+            content=f"知识库「{kb.name}」有新文档等待审批。",
+            priority="normal",
+            resource_type="document",
+            resource_id=doc.id,
+        ))
+
+
 def _acquire_lock(doc_id: str, ttl: int = 1800) -> bool:
     """Redis SETNX lock for one-task-per-document."""
     try:
@@ -278,6 +324,12 @@ def process_document(self, doc_id: str) -> dict:
                     .values(chunk_count=KnowledgeBase.chunk_count + len(chunk_objects))
                 )
                 _create_notification(session, doc_user_id, doc_title, True, doc_id, kb_id)
+
+                # Plan 29 — review workflow opt-in：KB.review_required=True 时
+                # 将文档置入 pending 队列并通知候选 reviewer (KB owner + dept_admin)。
+                if kb and kb.review_required:
+                    _submit_doc_for_review(session, doc_id, kb)
+
                 session.commit()
 
                 # Cross-domain event — Langfuse / governance consumers listen

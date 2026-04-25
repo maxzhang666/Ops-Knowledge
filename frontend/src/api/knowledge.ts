@@ -26,6 +26,8 @@ export interface KnowledgeBase {
   document_count: number
   chunk_count: number
   status: KBStatus
+  // Plan 29 — opt-in knowledge review workflow
+  review_required: boolean
   created_by: string
   created_at: string
   updated_at: string
@@ -64,6 +66,11 @@ export interface Document {
   is_archived: boolean
   is_stale: boolean
   stale_since: string | null
+  // Plan 29
+  review_status: "pending" | "approved" | "rejected" | null
+  reviewer_id: string | null
+  reviewed_at: string | null
+  review_comment: string | null
   version: number
   processed_at: string | null
   created_by: string
@@ -191,6 +198,7 @@ interface UpdateKBPayload {
   embedding_model_name?: string
   chunking_config?: ChunkingConfig
   retrieval_config?: RetrievalConfig
+  review_required?: boolean
 }
 
 interface CreateFolderPayload {
@@ -340,6 +348,38 @@ export const knowledgeApi = {
       `/knowledge/${kbId}/documents/${docId}/archive`,
       { archive },
     )
+  },
+
+  // Plan 29 — review workflow
+  reviewQueue(kbId: string) {
+    return api.get<{
+      kb_id: string
+      items: Array<{
+        document_id: string
+        title: string
+        created_by: string
+        created_at: string
+        chunk_count: number
+      }>
+    }>(`/knowledge/${kbId}/review/queue`)
+  },
+  approveDocument(kbId: string, docId: string, comment?: string) {
+    return api.post<{
+      document_id: string
+      review_status: string
+      reviewer_id: string | null
+      reviewed_at: string | null
+      review_comment: string | null
+    }>(`/knowledge/${kbId}/documents/${docId}/review/approve`, { comment })
+  },
+  rejectDocument(kbId: string, docId: string, comment?: string) {
+    return api.post<{
+      document_id: string
+      review_status: string
+      reviewer_id: string | null
+      reviewed_at: string | null
+      review_comment: string | null
+    }>(`/knowledge/${kbId}/documents/${docId}/review/reject`, { comment })
   },
 
   downloadDocument(kbId: string, docId: string) {

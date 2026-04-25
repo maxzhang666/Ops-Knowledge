@@ -424,6 +424,9 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         </CardContent>
       </Card>
 
+      {/* Review workflow (Plan 29) */}
+      <ReviewToggleCard kb={kb} onUpdated={onUpdated} ifUnmodifiedSince={ifUnmodifiedSince} />
+
       {/* Retrieval */}
       <Card>
         <CardHeader>
@@ -547,5 +550,62 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         onConfirm={handleDeleteKB}
       />
     </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// Plan 29 — KB review_required toggle
+
+function ReviewToggleCard({
+  kb, onUpdated, ifUnmodifiedSince,
+}: {
+  kb: KnowledgeBase
+  onUpdated: () => void
+  ifUnmodifiedSince: string
+}) {
+  const [enabled, setEnabled] = useState<boolean>(kb.review_required ?? false)
+  const [saving, setSaving] = useState(false)
+  const dirty = enabled !== (kb.review_required ?? false)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await knowledgeApi.updateKB(kb.id, { review_required: enabled }, ifUnmodifiedSince)
+      toast.success(enabled ? "已开启知识审批" : "已关闭知识审批")
+      onUpdated()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存失败")
+      setEnabled(kb.review_required ?? false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>知识审批</CardTitle>
+        <CardDescription>
+          开启后，新上传文档处理完成会进入审批队列，仅审批通过后才参与检索
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex items-center justify-between gap-3">
+        <div>
+          <Label className="text-sm">审批工作流</Label>
+          <p className="text-[11px] text-muted-foreground">
+            通知 KB 责任人 + 同部门管理员；上传者不能审批自己的文档
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch checked={enabled} onCheckedChange={(v) => setEnabled(Boolean(v))} />
+          {dirty && (
+            <Button size="sm" onClick={save} disabled={saving}>
+              {saving ? "保存中..." : "保存"}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }

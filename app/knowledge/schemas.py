@@ -25,6 +25,8 @@ class KBUpdate(BaseModel):
     embedding_model_id: uuid.UUID | None = None
     chunking_config: dict | None = None
     retrieval_config: dict | None = None
+    # Plan 29 — knowledge review workflow toggle
+    review_required: bool | None = None
 
 
 class KBResponse(BaseModel):
@@ -39,6 +41,7 @@ class KBResponse(BaseModel):
     document_count: int
     chunk_count: int
     status: str
+    review_required: bool = False
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -128,6 +131,12 @@ class DocumentResponse(BaseModel):
     token_count: int
     position: int
     is_archived: bool
+    is_stale: bool = False
+    stale_since: datetime | None = None
+    review_status: str | None = None
+    reviewer_id: uuid.UUID | None = None
+    reviewed_at: datetime | None = None
+    review_comment: str | None = None
     version: int
     processed_at: datetime | None
     created_by: uuid.UUID

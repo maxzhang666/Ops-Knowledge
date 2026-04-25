@@ -106,10 +106,10 @@ class RetrievalService:
                 pass
         total_searched = len(results)
 
-        # 3.5 Plan 32 M3 生命周期：剔除归档文档的 chunk。
-        #     Milvus 不知道 is_archived，归档信号只在 SQL 侧。
+        # 3.5 Plan 32 M3 生命周期 + Plan 29 审批：post-filter 仅在 SQL 侧
+        #     表达的可见性约束（归档 / 未通过审批）。
         if results:
-            results = await self._filter_archived(results)
+            results = await self._filter_invisible(results)
 
         # 4. Optional rerank
         if reranker_provider_id and reranker_model_name and results:
@@ -182,8 +182,10 @@ class RetrievalService:
             total_searched=total_searched,
         )
 
-    async def _filter_archived(self, results: list[SearchResult]) -> list[SearchResult]:
-        """剔除归档文档的 chunk；失败时保守通过（不让治理故障阻断检索）。"""
+    async def _filter_invisible(self, results: list[SearchResult]) -> list[SearchResult]:
+        """聚合不可见过滤：归档文档（Plan 32 M3）+ KB.review_required=True
+        但 Document.review_status != approved（Plan 29）。失败时保守通过，
+        不让治理故障阻断检索。"""
         doc_ids: set[uuid.UUID] = set()
         for r in results:
             if r.document_id:
@@ -195,20 +197,33 @@ class RetrievalService:
             return results
         try:
             from sqlalchemy import select as _select
-            from app.knowledge.models import Document
+            from app.knowledge.models import Document, KnowledgeBase
             async with async_session() as db:
                 rows = (await db.execute(
-                    _select(Document.id).where(
-                        Document.id.in_(doc_ids),
-                        Document.is_archived.is_(True),
+                    _select(
+                        Document.id,
+                        Document.is_archived,
+                        Document.review_status,
+                        KnowledgeBase.review_required,
                     )
-                )).scalars().all()
-            archived = {str(d) for d in rows}
-            if archived:
-                filtered = [r for r in results if r.document_id not in archived]
-                logger.debug("retrieval_archive_filtered", dropped=len(results) - len(filtered))
+                    .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+                    .where(Document.id.in_(doc_ids))
+                )).all()
+            invisible: set[str] = set()
+            for did, archived, review_status, review_required in rows:
+                if archived:
+                    invisible.add(str(did))
+                    continue
+                if review_required and review_status != "approved":
+                    invisible.add(str(did))
+            if invisible:
+                filtered = [r for r in results if r.document_id not in invisible]
+                logger.debug(
+                    "retrieval_invisible_filtered",
+                    dropped=len(results) - len(filtered),
+                )
                 return filtered
             return results
         except Exception:
-            logger.debug("retrieval_archive_filter_failed", exc_info=True)
+            logger.debug("retrieval_invisible_filter_failed", exc_info=True)
             return results

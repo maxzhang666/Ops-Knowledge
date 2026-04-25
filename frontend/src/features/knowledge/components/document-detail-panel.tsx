@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
-import { ArchiveRestore, Clock, Download, Move, RefreshCcw, Trash2, Archive } from "lucide-react"
+import {
+  ArchiveRestore, Check, Clock, Download, Move, RefreshCcw, Trash2, Archive, X,
+} from "lucide-react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,6 +14,7 @@ import { ProcessingProgress } from "./processing-progress"
 import { ChunkViewer } from "./chunk-viewer"
 import { DocumentPreview } from "./document-preview"
 import { ImpactPreviewDialog } from "./impact-preview-dialog"
+import { useAuthStore } from "@/stores/auth"
 
 const PREVIEWABLE_TYPES = new Set(["markdown", "txt", "csv"])
 import { knowledgeApi, type Document } from "@/api/knowledge"
@@ -69,6 +73,18 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
     onChanged()
   }
 
+  async function handleReview(approve: boolean) {
+    try {
+      if (approve) await knowledgeApi.approveDocument(kbId, docId)
+      else await knowledgeApi.rejectDocument(kbId, docId)
+      toast.success(approve ? "已通过审批" : "已拒绝")
+      await reload()
+      onChanged()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "操作失败")
+    }
+  }
+
   async function handleReprocess() {
     await knowledgeApi.reprocessDocument(kbId, docId)
     await reload()
@@ -107,6 +123,15 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
             <Archive className="size-3" /> 已归档
           </Badge>
         )}
+        {doc.review_status === "pending" && (
+          <Badge variant="outline" className="text-warning">待审批</Badge>
+        )}
+        {doc.review_status === "approved" && (
+          <Badge variant="outline" className="text-success">已审批</Badge>
+        )}
+        {doc.review_status === "rejected" && (
+          <Badge variant="outline" className="text-destructive">已拒绝</Badge>
+        )}
         <span className="text-xs text-muted-foreground">
           {formatSize(doc.file_size)} · {doc.chunk_count} 分块 · <TimeDisplay value={doc.updated_at} />
         </span>
@@ -129,6 +154,21 @@ export function DocumentDetailPanel({ kbId, docId, onChanged, onClosed }: Docume
               <Archive className="size-3.5" />
             </Button>
           )}
+          {doc.review_status === "pending" && (() => {
+            const me = useAuthStore.getState().user
+            if (!me) return null
+            if (me.id === doc.created_by) return null  // 防自审
+            return (
+              <>
+                <Button variant="ghost" size="icon-sm" title="审批通过" onClick={() => handleReview(true)}>
+                  <Check className="size-3.5 text-success" />
+                </Button>
+                <Button variant="ghost" size="icon-sm" title="审批拒绝" onClick={() => handleReview(false)}>
+                  <X className="size-3.5 text-destructive" />
+                </Button>
+              </>
+            )
+          })()}
           <Button variant="ghost" size="icon-sm" title="删除" onClick={() => setImpactAction("delete")}>
             <Trash2 className="size-3.5" />
           </Button>

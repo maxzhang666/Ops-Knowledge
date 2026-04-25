@@ -52,6 +52,8 @@ class KnowledgeBase(Base, UUIDMixin, TimestampMixin):
     #   { "expiration_threshold_days": int, "auto_archive_idle_days": int }
     # NULL → system defaults
     governance_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Plan 29 — knowledge review workflow opt-in. False keeps legacy behavior.
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[KBStatus] = mapped_column(
@@ -121,6 +123,14 @@ class Document(Base, UUIDMixin, TimestampMixin):
     # Plan 32 M3 生命周期：过期标记 + 标记时间戳，驱动自动归档/通知去重
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     stale_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Plan 29 — review workflow. NULL = no review required (legacy / KB toggled off);
+    # otherwise: pending | approved | rejected.
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(
