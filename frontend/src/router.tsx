@@ -20,6 +20,7 @@ import ProfilePage from "@/pages/settings/profile"
 import ApiKeysPage from "@/pages/settings/api-keys"
 import SsoSettingsPage from "@/pages/settings/sso"
 import ObservabilityPage from "@/pages/settings/observability"
+import CostsPage from "@/pages/settings/costs"
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
               { path: "users", element: <UsersPage /> },
               { path: "sso", element: <SsoSettingsPage /> },
               { path: "observability", element: <ObservabilityPage /> },
+              { path: "costs", element: <CostsPage /> },
               { path: "system", element: <SystemPage /> },
               { path: "profile", element: <ProfilePage /> },
               { path: "api-keys", element: <ApiKeysPage /> },

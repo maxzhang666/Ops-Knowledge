@@ -172,6 +172,65 @@ async def get_settings(
     return row.settings if row else {}
 
 
+# ── Cost dashboard (Plan 28) ──────────────────────────────────────
+
+
+@router.get("/costs/summary")
+async def cost_summary(
+    _user: User = require_role(UserRole.SYSTEM_ADMIN),
+    window_days: int = 30,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.system.cost_service import CostService
+    s = await CostService(db).summary(window_days=window_days)
+    return {
+        "total_cost": s.total_cost,
+        "total_input_tokens": s.total_input_tokens,
+        "total_output_tokens": s.total_output_tokens,
+        "call_count": s.call_count,
+        "window_days": s.window_days,
+    }
+
+
+@router.get("/costs/timeline")
+async def cost_timeline(
+    _user: User = require_role(UserRole.SYSTEM_ADMIN),
+    window_days: int = 7,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.system.cost_service import CostService
+    points = await CostService(db).timeline(window_days=window_days)
+    return {
+        "window_days": window_days,
+        "points": [
+            {"date": p.date, "cost": p.cost, "tokens": p.tokens, "calls": p.calls}
+            for p in points
+        ],
+    }
+
+
+@router.get("/costs/top")
+async def cost_top(
+    _user: User = require_role(UserRole.SYSTEM_ADMIN),
+    by: str = "provider",
+    window_days: int = 30,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.system.cost_service import CostService
+    if by not in ("user", "provider", "model", "call_type"):
+        raise HTTPException(400, "by must be one of: user, provider, model, call_type")
+    items = await CostService(db).top_groups(by=by, window_days=window_days, limit=limit)  # type: ignore[arg-type]
+    return {
+        "by": by,
+        "window_days": window_days,
+        "items": [
+            {"key": i.key, "label": i.label, "cost": i.cost, "tokens": i.tokens, "calls": i.calls}
+            for i in items
+        ],
+    }
+
+
 @router.get("/observability")
 async def observability_status(current_user: CurrentUser):
     """Langfuse bootstrap state — env-based per spec 05, not runtime-configurable.
