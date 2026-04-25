@@ -433,6 +433,13 @@ async def _run_rag_pipeline_inner(
             safe_delay(generate_title, str(conversation_id), query)
         if conv.message_count > 10:
             safe_delay(summarize_conversation, str(conversation_id))
+        # Plan 25: LLM-as-judge 评估 —— 异步触发，采样率由 SystemSettings 控制
+        if chunks:
+            try:
+                from app.knowledge.evaluation.tasks import evaluate_message
+                safe_delay(evaluate_message, str(assistant_msg.id))
+            except Exception:
+                logger.debug("evaluate_dispatch_failed", exc_info=True)
 
     except Exception:
         logger.exception("pipeline_error")
