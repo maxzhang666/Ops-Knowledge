@@ -17,6 +17,46 @@ from app.model.service import ModelService
 router = APIRouter(prefix="/knowledge/{kb_id}/retrieval", tags=["retrieval"])
 
 
+# ── Plan 35 — auto-tuning recommendations endpoint ────────────────
+
+
+class RetrievalRecoItem(BaseModel):
+    query_type: str
+    sample_size: int
+    payload: dict
+    generated_at: str
+
+
+@router.get("/recommendations", response_model=list[RetrievalRecoItem])
+async def list_retrieval_recommendations(
+    kb_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select as _select
+    from app.knowledge.retrieval.models import RetrievalRecommendation
+    from app.knowledge.service import KBService
+
+    svc = KBService(db)
+    kb = await svc.get_kb(kb_id)
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by)
+
+    rows = (await db.execute(
+        _select(RetrievalRecommendation)
+        .where(RetrievalRecommendation.kb_id == kb_id)
+        .order_by(RetrievalRecommendation.sample_size.desc())
+    )).scalars().all()
+    return [
+        RetrievalRecoItem(
+            query_type=r.query_type,
+            sample_size=r.sample_size,
+            payload=r.payload,
+            generated_at=r.generated_at.isoformat(),
+        )
+        for r in rows
+    ]
+
+
 class RetrievalTestRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(10, ge=1, le=100)

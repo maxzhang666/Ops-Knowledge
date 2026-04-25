@@ -113,6 +113,9 @@ export function GovernanceTab({ kb }: GovernanceTabProps) {
       {/* Topic distribution */}
       <TopicsCard kbId={kb.id} />
 
+      {/* Plan 35 — Retrieval Strategy Recommendations */}
+      <RetrievalRecoCard kbId={kb.id} />
+
       {/* Config */}
       <ConfigForm kb={kb} onSaved={load} />
     </div>
@@ -663,6 +666,116 @@ function ConfigForm({ kb, onSaved }: { kb: KnowledgeBase; onSaved: () => void })
             <Save className="mr-1 size-3.5" /> 保存
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// Plan 35 — Retrieval Strategy Recommendations
+
+interface RecoItem {
+  query_type: string
+  sample_size: number
+  payload: {
+    base: { bm25_weight: number; vector_weight: number; top_k: number; rerank: boolean; note: string }
+    tuned: { bm25_weight: number; vector_weight: number; top_k: number; rerank: boolean; note: string }
+    stats: {
+      sample_size: number; hit_count: number; no_result_count: number
+      avg_result_count: number; hit_rate: number
+      adopted_via_events: number; adopted_rate: number
+    }
+    note: string
+  }
+  generated_at: string
+}
+
+const QTYPE_LABEL: Record<string, string> = {
+  troubleshooting: "故障排查",
+  concept: "概念解释",
+  how_to: "操作步骤",
+  definition: "术语定义",
+  lookup: "精确查找",
+  other: "其他",
+}
+
+function RetrievalRecoCard({ kbId }: { kbId: string }) {
+  const [items, setItems] = useState<RecoItem[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    knowledgeApi.retrievalRecommendations(kbId)
+      .then((r) => { if (!cancelled) setItems(r) })
+      .catch(() => { if (!cancelled) setItems([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [kbId])
+
+  if (loading) {
+    return (
+      <Card size="sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <BarChart3 className="size-4 text-primary" /> 检索策略建议
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="py-4 text-xs text-muted-foreground">加载中…</CardContent>
+      </Card>
+    )
+  }
+
+  if (!items || items.length === 0) {
+    return (
+      <Card size="sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <BarChart3 className="size-4 text-primary" /> 检索策略建议
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="py-4 text-xs text-muted-foreground">
+          暂无建议数据 —— 后台每日重算；积累一定检索量后会出现按 query 类型的策略推荐
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card size="sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <BarChart3 className="size-4 text-primary" /> 检索策略建议（{items.length}）
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2.5">
+        {items.map((it) => {
+          const t = it.payload.tuned
+          const b = it.payload.base
+          const hasShift = b.bm25_weight !== t.bm25_weight || b.top_k !== t.top_k || b.rerank !== t.rerank
+          return (
+            <div key={it.query_type} className="rounded-md border p-2.5">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-sm font-medium">{QTYPE_LABEL[it.query_type] || it.query_type}</span>
+                <Badge variant="outline" className="text-[10px]">样本 {it.sample_size}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-1 text-[11px]">
+                <Badge variant={hasShift ? "default" : "secondary"} className="font-mono">
+                  BM25 {t.bm25_weight} / 向量 {t.vector_weight}
+                </Badge>
+                <Badge variant="outline" className="font-mono">top_k {t.top_k}</Badge>
+                <Badge variant="outline" className="font-mono">{t.rerank ? "rerank ✓" : "rerank ×"}</Badge>
+                {it.payload.stats.sample_size > 0 && (
+                  <Badge variant="outline" className="font-mono">命中率 {(it.payload.stats.hit_rate * 100).toFixed(0)}%</Badge>
+                )}
+              </div>
+              {it.payload.note && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">{it.payload.note}</p>
+              )}
+            </div>
+          )
+        })}
       </CardContent>
     </Card>
   )

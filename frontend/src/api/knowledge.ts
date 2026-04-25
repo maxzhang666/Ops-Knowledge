@@ -426,6 +426,25 @@ export const knowledgeApi = {
     return api.post<RetrievalTestResponse>(`/knowledge/${kbId}/retrieval/test`, data)
   },
 
+  // Plan 35 — Retrieval auto-tuning recommendations
+  retrievalRecommendations(kbId: string) {
+    return api.get<Array<{
+      query_type: string
+      sample_size: number
+      payload: {
+        base: { bm25_weight: number; vector_weight: number; top_k: number; rerank: boolean; note: string }
+        tuned: { bm25_weight: number; vector_weight: number; top_k: number; rerank: boolean; note: string }
+        stats: {
+          sample_size: number; hit_count: number; no_result_count: number
+          avg_result_count: number; hit_rate: number
+          adopted_via_events: number; adopted_rate: number
+        }
+        note: string
+      }
+      generated_at: string
+    }>>(`/knowledge/${kbId}/retrieval/recommendations`)
+  },
+
   // Coverage (Plan 26 Topic Distribution)
   listTopics(kbId: string) {
     return api.get<{

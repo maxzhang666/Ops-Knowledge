@@ -177,6 +177,23 @@ class RetrievalService:
             result_count=len(results),
             timing_ms=elapsed,
         )
+        # Plan 35 — 记录每次检索（按 query_type）做 auto-tuning 数据底座
+        try:
+            from app.knowledge.retrieval.query_classifier import classify
+            from app.knowledge.retrieval.models import RetrievalLog
+            qtype = classify(query_used).type
+            async with async_session() as log_db:
+                for kid in kb_ids:
+                    log_db.add(RetrievalLog(
+                        kb_id=uuid.UUID(str(kid)),
+                        query=query_used[:500],
+                        query_type=qtype,
+                        top_k=top_k,
+                        result_count=len(results),
+                    ))
+                await log_db.commit()
+        except Exception:
+            logger.debug("retrieval_log_write_failed", exc_info=True)
         # L2 cache store
         try:
             from dataclasses import asdict

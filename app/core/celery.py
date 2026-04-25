@@ -69,6 +69,10 @@ celery_app.conf.update(
             "task": "app.knowledge.coverage.tasks.cross_kb_redundancy_scan",
             "schedule": 86400.0,  # daily — Plan 31 cross-KB duplication detection
         },
+        "retrieval-recommendation-rebuild": {
+            "task": "app.knowledge.retrieval.tasks.recommendation_rebuild",
+            "schedule": 86400.0,  # daily — Plan 35 retrieval auto-tuning
+        },
     },
 )
 celery_app.autodiscover_tasks(
@@ -76,7 +80,7 @@ celery_app.autodiscover_tasks(
         "app.knowledge.ingestion", "app.knowledge.embedding",
         "app.knowledge.governance", "app.knowledge.lifecycle",
         "app.knowledge.evaluation", "app.knowledge.chunking",
-        "app.knowledge.coverage",
+        "app.knowledge.coverage", "app.knowledge.retrieval",
         "app.chat", "app.system",
         "app.workflow", "app.mcp", "app.agent.orchestrator",
     ],
