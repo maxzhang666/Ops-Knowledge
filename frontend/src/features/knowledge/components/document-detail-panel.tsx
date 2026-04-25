@@ -16,7 +16,7 @@ import { DocumentPreview } from "./document-preview"
 import { ImpactPreviewDialog } from "./impact-preview-dialog"
 import { useAuthStore } from "@/stores/auth"
 
-const PREVIEWABLE_TYPES = new Set(["markdown", "txt", "csv"])
+const PREVIEWABLE_TYPES = new Set(["markdown", "txt", "csv", "pdf"])
 import { knowledgeApi, type Document } from "@/api/knowledge"
 
 interface DocumentDetailPanelProps {

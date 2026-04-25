@@ -17,6 +17,9 @@ export interface RetrievalChunk {
   content_preview: string
   score: number
   document_title: string
+  // Plan 32 — populated by chat pipeline so reference panel can deep-link to the source
+  document_id?: string | null
+  source_kb_id?: string | null
 }
 
 export interface Message {

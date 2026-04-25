@@ -5,12 +5,15 @@ import { markdownCodeBlockComponents } from "@/components/shared/markdown-code-b
 import { LoadingSpinner } from "@/components/shared/loading-spinner"
 import { EmptyState } from "@/components/shared/empty-state"
 import { knowledgeApi } from "@/api/knowledge"
+import { PdfPreview } from "./pdf-preview"
 
 interface DocumentPreviewProps {
   kbId: string
   docId: string
-  sourceType: string  // "markdown" | "txt" | "csv" — determines rendering
+  sourceType: string  // "markdown" | "txt" | "csv" | "pdf" — determines rendering
   title: string
+  // Plan 32 — 检索到本文档片段的内容；用于 PDF 高亮+滚动定位
+  highlightText?: string
 }
 
 // Source types the backend /preview endpoint supports.
@@ -24,15 +27,17 @@ const PREVIEWABLE = new Set(["markdown", "txt", "csv"])
  *   - txt:      <pre> monospace
  *   - csv:      parsed into <table>
  */
-export function DocumentPreview({ kbId, docId, sourceType, title }: DocumentPreviewProps) {
+export function DocumentPreview({ kbId, docId, sourceType, title, highlightText }: DocumentPreviewProps) {
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const canPreview = PREVIEWABLE.has(sourceType.toLowerCase())
+  const lower = sourceType.toLowerCase()
+  const isPdf = lower === "pdf"
+  const canPreview = isPdf || PREVIEWABLE.has(lower)
 
   useEffect(() => {
-    if (!canPreview) { setLoading(false); return }
+    if (!canPreview || isPdf) { setLoading(false); return }
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -41,8 +46,11 @@ export function DocumentPreview({ kbId, docId, sourceType, title }: DocumentPrev
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "加载失败") })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [kbId, docId, canPreview])
+  }, [kbId, docId, canPreview, isPdf])
 
+  if (isPdf) {
+    return <PdfPreview kbId={kbId} docId={docId} highlightText={highlightText} />
+  }
   if (!canPreview) {
     return (
       <EmptyState

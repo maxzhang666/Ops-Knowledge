@@ -249,6 +249,9 @@ async def _run_rag_pipeline_inner(
                             "content_preview": c["content"][:200],
                             "score": round(c["score"], 4),
                             "document_title": c["title"],
+                            # Plan 32 — frontend reference panel uses these to deep-link
+                            "document_id": c.get("document_id"),
+                            "source_kb_id": c.get("source_kb_id"),
                         }
                         for c in chunks
                     ],
