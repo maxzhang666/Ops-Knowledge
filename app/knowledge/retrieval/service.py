@@ -123,6 +123,11 @@ class RetrievalService:
         if results:
             results = await self._filter_invisible(results)
 
+        # 3.6 Plan 36 — Multi-source fusion: 跨 KB 时启用 source weighting +
+        #     dedup + MMR diversity（单 KB 跳过，无意义）。
+        if results and len(kb_ids) > 1:
+            results = await self._apply_fusion(results, kb_ids, top_k=top_k)
+
         # 4. Optional rerank
         if reranker_provider_id and reranker_model_name and results:
             results = await rerank_results(
@@ -255,4 +260,61 @@ class RetrievalService:
             return results
         except Exception:
             logger.debug("retrieval_invisible_filter_failed", exc_info=True)
+            return results
+
+    async def _apply_fusion(
+        self, results: list[SearchResult], kb_ids: list[str], *, top_k: int,
+    ) -> list[SearchResult]:
+        """Plan 36 — 跨 KB 智能融合：源权重 + 去重 + MMR 多样性。"""
+        try:
+            from sqlalchemy import select as _select
+            from app.knowledge.coverage.models import ChunkCrossKBRedundancyPair
+            from app.knowledge.governance.service import GovernanceService
+            from app.knowledge.retrieval.fusion import (
+                FusionConfig, fuse_results, health_to_weight,
+            )
+
+            # 1) source weights = 健康分派生
+            source_weights: dict[str, float] = {}
+            try:
+                async with async_session() as gov_db:
+                    svc = GovernanceService(gov_db)
+                    for kid in kb_ids:
+                        try:
+                            health = await svc.compute_health(uuid.UUID(str(kid)))
+                            source_weights[str(kid)] = health_to_weight(health.health_score)
+                        except Exception:
+                            source_weights[str(kid)] = 1.0
+            except Exception:
+                logger.debug("fusion_health_lookup_failed", exc_info=True)
+
+            # 2) cross-KB dedup pairs（仅查涉及到的 chunk）
+            dedup_pairs: list[tuple[str, str]] = []
+            chunk_ids = {r.chunk_id for r in results if r.chunk_id}
+            if len(chunk_ids) > 1:
+                async with async_session() as dd_db:
+                    rows = (await dd_db.execute(
+                        _select(
+                            ChunkCrossKBRedundancyPair.chunk_a_id,
+                            ChunkCrossKBRedundancyPair.chunk_b_id,
+                        ).where(
+                            ChunkCrossKBRedundancyPair.chunk_a_id.in_(
+                                [uuid.UUID(c) for c in chunk_ids]
+                            ),
+                            ChunkCrossKBRedundancyPair.chunk_b_id.in_(
+                                [uuid.UUID(c) for c in chunk_ids]
+                            ),
+                        )
+                    )).all()
+                    dedup_pairs = [(str(a), str(b)) for a, b in rows]
+
+            return fuse_results(
+                results,
+                source_weights=source_weights,
+                dedup_pairs=dedup_pairs,
+                top_k=top_k,
+                config=FusionConfig(),
+            )
+        except Exception:
+            logger.debug("fusion_failed", exc_info=True)
             return results
