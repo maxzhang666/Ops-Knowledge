@@ -89,6 +89,14 @@ export function PersonaPanel({ agent, onUpdated, onDeleted }: PersonaPanelProps)
   // Share
   const [shareToDept, setShareToDept] = useState(agent.share_to_dept ?? false)
 
+  // Plan 33 — Prompt injection defense
+  const initialGuardMode = (() => {
+    const cfg = (agent.guard_config as { mode?: string } | null) ?? null
+    const m = cfg?.mode
+    return (m === "log" || m === "block") ? m : "off"
+  })() as "off" | "log" | "block"
+  const [guardMode, setGuardMode] = useState<"off" | "log" | "block">(initialGuardMode)
+
   const [loading, setLoading] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -136,6 +144,7 @@ export function PersonaPanel({ agent, onUpdated, onDeleted }: PersonaPanelProps)
         show_thinking: showThinking,
         thinking_detail: thinkingDetail,
         share_to_dept: shareToDept,
+        guard_config: guardMode === "off" ? null : { mode: guardMode },
       })
       onUpdated()
       setJustSaved(true)
@@ -391,6 +400,26 @@ export function PersonaPanel({ agent, onUpdated, onDeleted }: PersonaPanelProps)
             onCheckedChange={(v) => setShareToDept(v as boolean)}
           />
           <Label htmlFor="share-to-dept">共享给部门</Label>
+        </div>
+
+        {/* Plan 33 — Prompt injection defense */}
+        <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">提示注入防护</Label>
+            <select
+              className="h-7 rounded-md border bg-background px-2 text-xs"
+              value={guardMode}
+              onChange={(e) => setGuardMode(e.target.value as "off" | "log" | "block")}
+            >
+              <option value="off">关闭</option>
+              <option value="log">仅记录</option>
+              <option value="block">拦截</option>
+            </select>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            检测用户输入中的指令覆盖 / 角色劫持 / 系统提示泄露 / 数据外泄等模式。
+            「仅记录」放行但写入消息 metadata；「拦截」对高风险输入直接拒答。
+          </p>
         </div>
 
         <div>

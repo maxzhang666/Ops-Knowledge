@@ -23,6 +23,9 @@ export interface Agent {
   //   { classifier, default_handler, trusted_metadata_paths,
   //     diagnostic_mode_allowed_roles }
   orchestrator_config: Record<string, unknown> | null
+  // Plan 33 — prompt injection defense
+  //   { mode: "off" | "log" | "block", block_threshold: number, log_threshold: number }
+  guard_config: Record<string, unknown> | null
   welcome_message: string | null
   suggested_questions: string[] | null
   show_thinking: boolean
@@ -49,6 +52,7 @@ interface CreateAgentPayload {
   system_prompt?: string
   retrieval_config?: Record<string, unknown>
   orchestrator_config?: Record<string, unknown>  // Plan 31 — required when agent_type === "orchestrator"
+  guard_config?: Record<string, unknown>          // Plan 33
   welcome_message?: string
   suggested_questions?: string[]
   show_thinking?: boolean
@@ -71,6 +75,7 @@ interface UpdateAgentPayload {
   workflow_id?: string | null
   system_prompt?: string
   retrieval_config?: Record<string, unknown> | null
+  guard_config?: Record<string, unknown> | null  // Plan 33
   welcome_message?: string
   suggested_questions?: string[] | null
   show_thinking?: boolean

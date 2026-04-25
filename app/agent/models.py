@@ -48,6 +48,10 @@ class Agent(Base, UUIDMixin, TimestampMixin):
     # trusted_metadata_paths / diagnostic_mode_allowed_roles. NULL for other
     # agent types; ``retrieval_config`` is KB-specific and must not be overloaded.
     orchestrator_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Plan 33 — prompt injection defense per agent.
+    #   { "mode": "off"|"log"|"block", "block_threshold": 0.7, "log_threshold": 0.4 }
+    # NULL → off (legacy default).
+    guard_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSONB list of quick-prompt strings shown as clickable hint chips in Chat.
     # Nullable = "author hasn't configured any" (we also treat []  as empty).

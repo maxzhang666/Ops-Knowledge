@@ -116,6 +116,52 @@ async def _run_rag_pipeline_inner(
             "conversation_id": str(conversation_id),
         })
 
+        # Plan 33 — Prompt injection defense (input layer)
+        from app.chat.prompt_guard import evaluate as _guard_eval, parse_guard_config
+        guard_mode, guard_block_t, guard_log_t = parse_guard_config(agent.guard_config)
+        if guard_mode != "off":
+            guard_result = _guard_eval(
+                query, mode=guard_mode,
+                block_threshold=guard_block_t, log_threshold=guard_log_t,
+            )
+            if guard_result.action != "allow":
+                logger.info(
+                    "prompt_guard_hit",
+                    agent_id=str(agent.id), mode=guard_mode,
+                    score=guard_result.score,
+                    rules=[h.rule for h in guard_result.hits],
+                    action=guard_result.action,
+                )
+                if guard_result.action == "block":
+                    refusal = guard_result.refusal_message or "请求被安全策略拦截。"
+                    yield ("content_delta", {"delta": refusal})
+                    yield ("message_end", {
+                        "token_usage": {"input_tokens": 0, "output_tokens": 0},
+                        "trace_id": trace_id,
+                    })
+                    await conv_svc.update_message(
+                        assistant_msg.id,
+                        content=refusal,
+                        status="completed",
+                        metadata_={
+                            "guard": {
+                                "blocked": True,
+                                "score": guard_result.score,
+                                "hits": [
+                                    {"rule": h.rule, "score": h.score, "snippet": h.snippet}
+                                    for h in guard_result.hits
+                                ],
+                            },
+                        },
+                    )
+                    await db_session.commit()
+                    return
+                # log mode：放行，但把告警写入 message metadata 等待结尾合并
+                yield ("guard_warning", {
+                    "score": guard_result.score,
+                    "rules": [h.rule for h in guard_result.hits],
+                })
+
         # Load conversation history
         # Load history EXCLUDING the user_msg/assistant_msg we just added
         # (they're for DB persistence, not for prompt history).
