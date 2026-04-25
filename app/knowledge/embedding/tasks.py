@@ -126,6 +126,23 @@ def embed_document_chunks(self, doc_id: str, kb_id: str) -> dict:
             session.commit()
 
         logger.info("embed_document_done", doc_id=doc_id, count=len(vector_ids))
+
+        # P24.M4 RAPTOR hook — if KB enables use_raptor, schedule summary build.
+        #   Only for L0 embeds (the chunks we just wrote). RAPTOR task itself
+        #   guards against re-running with a skip if L0 count is too small.
+        try:
+            from app.knowledge.chunking.config import ChunkingConfig
+            from app.knowledge.chunking.raptor_task import build_raptor_for_document
+            from app.core.tasks import safe_delay
+
+            with Session(engine) as s2:
+                kb2 = s2.get(KnowledgeBase, kb_id)
+                cfg = ChunkingConfig.from_dict(kb2.chunking_config if kb2 else None)
+            if cfg.use_raptor:
+                safe_delay(build_raptor_for_document, doc_id, kb_id)
+        except Exception:
+            logger.debug("raptor_dispatch_failed", doc_id=doc_id, exc_info=True)
+
         return {"status": "completed", "doc_id": doc_id, "embedded": len(vector_ids)}
 
     except Exception as exc:

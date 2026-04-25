@@ -68,6 +68,8 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
   const [layoutRecognize, setLayoutRecognize] = useState((chunkCfg?.layout_recognize as boolean) ?? true)
   const [autoKeywords, setAutoKeywords] = useState((chunkCfg?.auto_keywords as boolean) ?? false)
   const [autoQuestions, setAutoQuestions] = useState((chunkCfg?.auto_questions as boolean) ?? false)
+  const [useRaptor, setUseRaptor] = useState((chunkCfg?.use_raptor as boolean) ?? false)
+  const [raptorMaxLevels, setRaptorMaxLevels] = useState((chunkCfg?.raptor_max_levels as number) ?? 3)
   const [savingChunk, setSavingChunk] = useState(false)
   const [chunkJustSaved, triggerChunkSaved] = useJustSaved()
 
@@ -114,7 +116,14 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
 
   const basicChanged = name !== kb.name || description !== (kb.description ?? "")
   const embChanged = embModelId !== (kb.embedding_model_id ?? "")
-  const chunkChanged = chunkingPreset !== ((kb.chunking_config as Record<string, unknown>)?.preset as string ?? "general")
+  const origCfg = (kb.chunking_config as Record<string, unknown>) ?? {}
+  const chunkChanged = (
+    chunkingPreset !== ((origCfg.preset as string) ?? "general")
+    || autoKeywords !== ((origCfg.auto_keywords as boolean) ?? false)
+    || autoQuestions !== ((origCfg.auto_questions as boolean) ?? false)
+    || useRaptor !== ((origCfg.use_raptor as boolean) ?? false)
+    || raptorMaxLevels !== ((origCfg.raptor_max_levels as number) ?? 3)
+  )
   const retrievalChanged =
     topK !== ((retrievalCfg?.top_k as number) ?? 5) ||
     rewrite !== ((retrievalCfg?.rewrite as boolean) ?? false) ||
@@ -184,9 +193,16 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
   async function saveChunking() {
     setSavingChunk(true)
     try {
+      // Enrichment / RAPTOR flags 与 preset 正交，所有预设都可开启
+      const enrichment = {
+        auto_keywords: autoKeywords,
+        auto_questions: autoQuestions,
+        use_raptor: useRaptor,
+        raptor_max_levels: raptorMaxLevels,
+      }
       const chunkPayload = chunkingPreset === "custom"
-        ? { preset: "custom", chunk_size: customChunkSize, chunk_overlap: customOverlap, delimiter: customDelimiter, layout_recognize: layoutRecognize, auto_keywords: autoKeywords, auto_questions: autoQuestions }
-        : { preset: chunkingPreset }
+        ? { preset: "custom", chunk_size: customChunkSize, chunk_overlap: customOverlap, delimiter: customDelimiter, layout_recognize: layoutRecognize, ...enrichment }
+        : { preset: chunkingPreset, ...enrichment }
       await knowledgeApi.updateKB(kb.id, { chunking_config: chunkPayload }, ifUnmodifiedSince)
       onUpdated()
       triggerChunkSaved()
@@ -346,17 +362,49 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
                 </div>
                 <p className="text-[10px] text-muted-foreground">启用后使用 AI 识别文档版面结构，提高分片质量</p>
               </div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">自动关键词</Label>
-                <Switch checked={autoKeywords} onCheckedChange={(v) => setAutoKeywords(v as boolean)} />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">自动问题生成</Label>
-                <Switch checked={autoQuestions} onCheckedChange={(v) => setAutoQuestions(v as boolean)} />
-              </div>
-              <p className="text-[10px] text-muted-foreground">自动关键词/问题通过 LLM 生成，增强检索召回率，消耗额外 token</p>
             </div>
           )}
+          {/* LLM 增强（所有 preset 共用）—— P24.M5 */}
+          <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">LLM 增强</p>
+                <p className="text-[11px] text-muted-foreground">开启后每个切片会额外调用系统默认 LLM，消耗 token</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-xs">自动关键词</Label>
+                <p className="text-[10px] text-muted-foreground">每个切片生成 3-5 个关键词，辅助检索召回</p>
+              </div>
+              <Switch checked={autoKeywords} onCheckedChange={(v) => setAutoKeywords(v as boolean)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-xs">自动问题</Label>
+                <p className="text-[10px] text-muted-foreground">每个切片生成 1-2 个用户视角的问题</p>
+              </div>
+              <Switch checked={autoQuestions} onCheckedChange={(v) => setAutoQuestions(v as boolean)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-xs">RAPTOR 树形摘要</Label>
+                <p className="text-[10px] text-muted-foreground">递归聚类+摘要生成层级 chunk，提升抽象查询效果</p>
+              </div>
+              <Switch checked={useRaptor} onCheckedChange={(v) => setUseRaptor(v as boolean)} />
+            </div>
+            {useRaptor && (
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">RAPTOR 最大层级</Label>
+                <Input
+                  type="number" min={1} max={5}
+                  value={raptorMaxLevels}
+                  onChange={(e) => setRaptorMaxLevels(Math.max(1, Math.min(5, Number(e.target.value) || 3)))}
+                  className="w-20"
+                />
+              </div>
+            )}
+          </div>
           {(chunkChanged || chunkJustSaved) && (
             <div className="flex justify-end">
               <Button

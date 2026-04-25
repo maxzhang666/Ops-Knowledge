@@ -342,11 +342,37 @@ export function ChunkViewer({ kbId, docId }: ChunkViewerProps) {
                     const meta = (activeChunk.metadata ?? {}) as Record<string, unknown>
                     const tags = Array.isArray(meta.tags) ? (meta.tags as string[]) : []
                     const notes = typeof meta.notes === "string" ? meta.notes : ""
-                    if (tags.length === 0 && !notes) return null
+                    const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : []
+                    const questions = Array.isArray(meta.questions) ? (meta.questions as string[]) : []
+                    const raptorChildren = Array.isArray(meta.raptor_children)
+                      ? (meta.raptor_children as string[])
+                      : []
+                    if (tags.length === 0 && !notes && keywords.length === 0 && questions.length === 0 && raptorChildren.length === 0) return null
                     return (
-                      <div className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+                      <div className="mt-4 flex flex-col gap-2 border-t pt-3 text-xs text-muted-foreground">
+                        {raptorChildren.length > 0 && (
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0">RAPTOR 摘要 · 覆盖 {raptorChildren.length} 个子切片</span>
+                          </div>
+                        )}
+                        {keywords.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>关键词：</span>
+                            {keywords.map((k) => (
+                              <Badge key={k} variant="outline" className="text-[10px]">{k}</Badge>
+                            ))}
+                          </div>
+                        )}
+                        {questions.length > 0 && (
+                          <div className="flex flex-col gap-0.5">
+                            <span>问题：</span>
+                            {questions.map((q, i) => (
+                              <span key={i} className="pl-3">• {q}</span>
+                            ))}
+                          </div>
+                        )}
                         {tags.length > 0 && (
-                          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <span>标签：</span>
                             {tags.map((t) => (
                               <Badge key={t} variant="secondary" className="text-[10px]">{t}</Badge>

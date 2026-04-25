@@ -188,20 +188,45 @@ def process_document(self, doc_id: str) -> dict:
                 # Stage 3: Chunking
                 _update_progress(session, doc_id, "chunking")
                 kb = session.get(KnowledgeBase, kb_id)
-                chunking_cfg = (kb.chunking_config or {}) if kb else {}
-                preset_name = chunking_cfg.get("preset", "general")
+                from app.knowledge.chunking.config import ChunkingConfig
+                cfg = ChunkingConfig.from_dict(kb.chunking_config if kb else None)
 
-                strategy, params = get_strategy_for_preset(preset_name)
+                strategy, params = get_strategy_for_preset(cfg.preset)
 
                 # Custom mode: override params from chunking_config
-                if chunking_cfg.get("chunk_size"):
-                    params["chunk_size"] = chunking_cfg["chunk_size"]
-                if chunking_cfg.get("chunk_overlap") is not None:
-                    params["chunk_overlap"] = chunking_cfg["chunk_overlap"]
-                if chunking_cfg.get("delimiter"):
-                    params["delimiter"] = chunking_cfg["delimiter"]
+                if cfg.chunk_size is not None:
+                    params["chunk_size"] = cfg.chunk_size
+                if cfg.chunk_overlap is not None:
+                    params["chunk_overlap"] = cfg.chunk_overlap
+                if cfg.delimiter:
+                    params["delimiter"] = cfg.delimiter
 
                 chunk_results = strategy.chunk(text, params)
+
+                # Stage 3.5: Chunk enrichment (P24) — opt-in via chunking_config
+                if cfg.needs_enrichment and chunk_results:
+                    try:
+                        from app.knowledge.chunking.enrichment import (
+                            build_default_chat_fn, enrich_chunks_sync,
+                        )
+                        chat_fn = build_default_chat_fn()
+                        enrichments = enrich_chunks_sync(
+                            chunk_results, chat_fn,
+                            want_keywords=cfg.auto_keywords,
+                            want_questions=cfg.auto_questions,
+                        )
+                        for cr, eo in zip(chunk_results, enrichments):
+                            if not eo.keywords and not eo.questions:
+                                continue
+                            meta = dict(cr.metadata or {})
+                            if eo.keywords:
+                                meta["keywords"] = eo.keywords
+                            if eo.questions:
+                                meta["questions"] = eo.questions
+                            cr.metadata = meta
+                    except Exception:
+                        # 失败不阻断主流程 —— 降级为无 enrichment 继续索引
+                        pass
 
                 # Stage 4: Scoring + Save
                 _update_progress(session, doc_id, "indexing", 0, len(chunk_results))
