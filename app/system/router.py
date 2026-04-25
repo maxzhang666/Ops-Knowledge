@@ -2,6 +2,7 @@ import uuid
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from pymilvus import MilvusClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -229,6 +230,44 @@ async def cost_top(
             for i in items
         ],
     }
+
+
+# ── Global search (Plan 34) ───────────────────────────────────────
+
+
+class SearchHitItem(BaseModel):
+    kind: str
+    id: str
+    title: str
+    subtitle: str
+    href: str
+
+
+class SearchResponse(BaseModel):
+    kbs: list[SearchHitItem]
+    documents: list[SearchHitItem]
+    conversations: list[SearchHitItem]
+
+
+@router.get("/search", response_model=SearchResponse)
+async def global_search(
+    current_user: CurrentUser,
+    q: str = "",
+    limit_per_domain: int = 8,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.system.search_service import SearchService
+    svc = SearchService(db)
+    result = await svc.search(
+        q,
+        user_id=current_user.id,
+        limit_per_domain=max(1, min(limit_per_domain, 30)),
+    )
+    return SearchResponse(
+        kbs=[SearchHitItem(**vars(h)) for h in result["kbs"]],
+        documents=[SearchHitItem(**vars(h)) for h in result["documents"]],
+        conversations=[SearchHitItem(**vars(h)) for h in result["conversations"]],
+    )
 
 
 @router.get("/observability")

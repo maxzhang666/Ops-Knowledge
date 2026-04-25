@@ -26,6 +26,15 @@ export const systemApi = {
     return api.post<TestConnectionResponse>("/system/test-connection", { service, config })
   },
 
+  // Plan 34 — Global search
+  search(q: string, limitPerDomain = 8) {
+    return api.get<{
+      kbs: Array<{ kind: string; id: string; title: string; subtitle: string; href: string }>
+      documents: Array<{ kind: string; id: string; title: string; subtitle: string; href: string }>
+      conversations: Array<{ kind: string; id: string; title: string; subtitle: string; href: string }>
+    }>("/system/search", { q, limit_per_domain: String(limitPerDomain) })
+  },
+
   // Plan 28 — Cost dashboard
   costSummary(windowDays = 30) {
     return api.get<{
