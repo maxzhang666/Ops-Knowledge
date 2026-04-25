@@ -216,6 +216,73 @@ class RetrievalService:
             total_searched=total_searched,
         )
 
+    async def retrieve_agentic(
+        self,
+        query: str,
+        kb_ids: list[str],
+        *,
+        top_k: int = 10,
+        per_subquery_k: int = 6,
+        **retrieve_kwargs,
+    ) -> RetrievalResult:
+        """Plan 37 — Agentic RAG: LLM 规划是否拆分子查询；命中 decompose 时
+        每条 sub-query 独立检索，再用 fusion 合并。规划失败/单 query 时
+        透传到 ``retrieve``。
+
+        ``retrieve_kwargs`` 透传给底层 ``retrieve``（embedding/rewrite/rerank
+        等参数），但 ``top_k`` 在子查询阶段被替换为 ``per_subquery_k``。
+        """
+        from app.knowledge.retrieval.agentic_planner import (
+            build_default_chat_fn, plan,
+        )
+        from app.knowledge.retrieval.fusion import fuse_results
+
+        chat_fn = build_default_chat_fn()
+        try:
+            agentic_plan = await plan(query, chat_fn=chat_fn)
+        except Exception:
+            logger.debug("agentic_plan_failed", exc_info=True)
+            return await self.retrieve(query=query, kb_ids=kb_ids, top_k=top_k, **retrieve_kwargs)
+
+        if agentic_plan.strategy != "decompose" or len(agentic_plan.subqueries) < 2:
+            return await self.retrieve(query=query, kb_ids=kb_ids, top_k=top_k, **retrieve_kwargs)
+
+        # 并发跑每条 sub-query
+        import asyncio as _asyncio
+        sub_results: list[RetrievalResult] = await _asyncio.gather(
+            *[
+                self.retrieve(query=sub, kb_ids=kb_ids, top_k=per_subquery_k, **retrieve_kwargs)
+                for sub in agentic_plan.subqueries
+            ],
+            return_exceptions=False,
+        )
+        # 合并所有结果，按 chunk_id 去重，然后跑 fuse_results 做多样性排序
+        seen: dict[str, SearchResult] = {}
+        for sr in sub_results:
+            for r in sr.results:
+                if not r.chunk_id:
+                    continue
+                if r.chunk_id not in seen or r.score > seen[r.chunk_id].score:
+                    seen[r.chunk_id] = r
+        merged = list(seen.values())
+        merged.sort(key=lambda r: r.score, reverse=True)
+        fused = fuse_results(merged, top_k=top_k)
+
+        total_searched = sum(s.total_searched for s in sub_results)
+        timing = sum(s.timing_ms for s in sub_results)
+        logger.info(
+            "agentic_decomposed_retrieval",
+            original=query, subs=agentic_plan.subqueries,
+            reason=agentic_plan.reason, candidates=len(merged),
+            final=len(fused),
+        )
+        return RetrievalResult(
+            results=fused,
+            query_used=" | ".join(agentic_plan.subqueries),
+            timing_ms=timing,
+            total_searched=total_searched,
+        )
+
     async def _filter_invisible(self, results: list[SearchResult]) -> list[SearchResult]:
         """聚合不可见过滤：归档文档（Plan 32 M3）+ KB.review_required=True
         但 Document.review_status != approved（Plan 29）。失败时保守通过，

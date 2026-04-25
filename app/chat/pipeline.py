@@ -275,7 +275,19 @@ async def _run_rag_pipeline_inner(
                 else:
                     retrieval_kwargs["embedding_provider_id"] = uuid.UUID(str(emb_provider_id))
                     retrieval_kwargs["embedding_model_name"] = emb_model_name
-                result = await retrieval_svc.retrieve(**retrieval_kwargs)
+                # Plan 37 — 启用 Agentic RAG（按 retrieval_config.agentic 开关）
+                use_agentic = bool(r_cfg.get("agentic", kb_r_cfg.get("agentic", False)))
+                if use_agentic:
+                    sub_top_k = retrieval_kwargs.pop("top_k", top_k)
+                    result = await retrieval_svc.retrieve_agentic(
+                        query=retrieval_kwargs.pop("query"),
+                        kb_ids=retrieval_kwargs.pop("kb_ids"),
+                        top_k=sub_top_k,
+                        per_subquery_k=max(3, sub_top_k // 2),
+                        **retrieval_kwargs,
+                    )
+                else:
+                    result = await retrieval_svc.retrieve(**retrieval_kwargs)
 
                 chunks = [
                     {
