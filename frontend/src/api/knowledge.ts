@@ -14,10 +14,14 @@ export interface RetrievalConfig {
   [key: string]: unknown
 }
 
+export type KBSourceType = "file" | "entry" | "git_repo" | "confluence"
+
 export interface KnowledgeBase {
   id: string
   name: string
   description: string
+  /** Plan 40/41 — 决定 IngestionPlugin。建库后不可改 */
+  source_type: KBSourceType
   embedding_model_id: string | null
   embedding_provider_id: string | null
   embedding_model_name: string | null
@@ -26,6 +30,9 @@ export interface KnowledgeBase {
   document_count: number
   chunk_count: number
   status: KBStatus
+  // Plan 32 M2 健康分缓存（0-100）。null = 尚未计算（新 KB / 未跑过 daily 任务）。
+  health_score: number | null
+  health_score_updated_at: string | null
   // Plan 29 — opt-in knowledge review workflow
   review_required: boolean
   created_by: string
@@ -111,6 +118,12 @@ export interface RetrievalResult {
   title: string
   metadata: Record<string, unknown> | null
   source_kb_id: string
+  // Workbench M1.2 — per-stage score breakdown. null when the route didn't run
+  // for this chunk (e.g. only matched on dense → bm25_score is null) or when
+  // rerank was disabled (rerank_score null).
+  dense_score: number | null
+  bm25_score: number | null
+  rerank_score: number | null
 }
 
 export interface RetrievalTestResponse {
@@ -119,6 +132,25 @@ export interface RetrievalTestResponse {
   total: number
   results: RetrievalResult[]
   indexed: boolean
+}
+
+// Workbench history feed
+export interface RetrievalLogItem {
+  id: string
+  query: string
+  query_type: string
+  top_k: number
+  result_count: number
+  latency_ms: number | null
+  params: Record<string, unknown> | null
+  created_by: string | null
+  created_at: string
+  is_test: boolean  // M6.5 — Workbench/Quick QA/评估批跑产生的 log 标记
+}
+
+// Workbench M2.1 — single-log detail with snapshot of the hit list
+export interface RetrievalLogDetail extends RetrievalLogItem {
+  results: RetrievalResult[]
 }
 
 // Governance (Plan 32 M2 + Plan 25 Layer 4)
@@ -182,6 +214,8 @@ export interface KBGovernanceConfig {
 export interface CreateKBPayload {
   name: string
   description?: string
+  /** Plan 41 — KB 类型；默认 file 兼容历史路径。建库后不可改 */
+  source_type?: KBSourceType
   embedding_model_id?: string
   embedding_provider_id?: string
   embedding_model_name?: string
@@ -234,6 +268,20 @@ interface TestRetrievalPayload {
   query: string
   top_k?: number
   folder_ids?: string[]
+  // Workbench M1.4 knobs — all optional, omit to use KB defaults
+  bm25_weight?: number
+  vector_weight?: number
+  score_threshold?: number
+  rerank_enabled?: boolean
+  rerank_registry_id?: string  // M6.8 — 临时覆盖 reranker（仅 rerank_enabled=true 生效）
+  embedding_registry_id?: string
+}
+
+export interface ListRetrievalLogsParams {
+  limit?: number
+  empty?: boolean
+  q?: string
+  mine?: boolean
 }
 
 interface BatchDeleteDocsPayload {
@@ -270,6 +318,10 @@ export const knowledgeApi = {
 
   deleteKB(id: string) {
     return api.post<void>(`/knowledge/${id}/delete`)
+  },
+
+  reindexKB(id: string) {
+    return api.post<{ task_id: string; status: "accepted" }>(`/knowledge/${id}/reindex`)
   },
 
   // Folders
@@ -424,6 +476,70 @@ export const knowledgeApi = {
   // Retrieval Test
   testRetrieval(kbId: string, data: TestRetrievalPayload) {
     return api.post<RetrievalTestResponse>(`/knowledge/${kbId}/retrieval/test`, data)
+  },
+
+  // Workbench history feed
+  listRetrievalLogs(kbId: string, params: ListRetrievalLogsParams = {}) {
+    const qs = new URLSearchParams()
+    if (params.limit != null) qs.set("limit", String(params.limit))
+    if (params.empty) qs.set("empty", "true")
+    if (params.q) qs.set("q", params.q)
+    if (params.mine) qs.set("mine", "true")
+    const query = qs.toString()
+    return api.get<RetrievalLogItem[]>(
+      `/knowledge/${kbId}/retrieval/logs${query ? "?" + query : ""}`,
+    )
+  },
+
+  getRetrievalLog(kbId: string, logId: string) {
+    return api.get<RetrievalLogDetail>(
+      `/knowledge/${kbId}/retrieval/logs/${logId}`,
+    )
+  },
+
+  // Workbench M3 — relevance feedback for individual chunks shown in
+  // the test results. Writes to chunk_usage_events via the same
+  // governance pipeline chat feedback uses.
+  retrievalFeedback(
+    kbId: string,
+    data: { chunk_id: string; sentiment: -1 | 0 | 1; log_id?: string },
+  ) {
+    return api.post<void>(`/knowledge/${kbId}/retrieval/feedback`, data)
+  },
+
+  // Workbench M3 — Golden Dataset (Plan 38) integration. Lets the user
+  // capture a query + its expected hit chunks straight from the test page.
+  listEvalDatasets(kbId: string) {
+    return api.get<Array<{
+      id: string; kb_id: string; name: string;
+      description: string | null; created_at: string
+    }>>(`/knowledge/${kbId}/evaluation/datasets`)
+  },
+
+  createEvalDataset(kbId: string, data: { name: string; description?: string }) {
+    return api.post<{
+      id: string; kb_id: string; name: string;
+      description: string | null; created_at: string
+    }>(`/knowledge/${kbId}/evaluation/datasets`, data)
+  },
+
+  addEvalQuestion(
+    datasetId: string,
+    data: { question: string; expected_answer?: string; expected_chunk_ids?: string[] },
+  ) {
+    return api.post<{
+      id: string; question: string;
+      expected_answer: string | null;
+      expected_chunk_ids: string[];
+      created_at: string;
+    }>(`/evaluation/datasets/${datasetId}/questions`, data)
+  },
+
+  // Workbench M6.3 — 阈值建议：抽 30 chunks pairwise cosine P95 = 模型 floor
+  retrievalThresholdSuggestion(kbId: string) {
+    return api.get<{ sample_size: number; floor: number | null; recommended: number | null }>(
+      `/knowledge/${kbId}/retrieval/threshold-suggestion`,
+    )
   },
 
   // Plan 35 — Retrieval auto-tuning recommendations

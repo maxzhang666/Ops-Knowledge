@@ -18,8 +18,17 @@ class CompositeStrategy(ChunkingStrategy):
         pos = 0
 
         for pc in primary_chunks:
-            parent_id = str(uuid.uuid4())
             if len(pc.content) > chunk_size:
+                # Parent chunk MUST be emitted alongside its children, otherwise
+                # the children's parent_chunk_id references a row that never
+                # gets inserted → FK violation. The parent acts as a coarse-
+                # grained retrieval target; children are the fine-grained ones.
+                parent_id = str(uuid.uuid4())
+                pc.id = parent_id
+                pc.position = pos
+                results.append(pc)
+                pos += 1
+
                 sub = self.secondary.chunk(pc.content, config)
                 for sc in sub:
                     sc.level = pc.level + 1

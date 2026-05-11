@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.chat.models import Conversation, Message
 from app.core.celery import celery_app
 from app.core.config import settings
-from app.model.service import ModelService
+from app.model.service import AgentModelNotConfigured, ModelService
 
 logger = structlog.get_logger(__name__)
 
@@ -58,9 +58,17 @@ def generate_title(self, conversation_id: str, first_message: str):
                     {"role": "system", "content": TITLE_SYSTEM},
                     {"role": "user", "content": first_message},
                 ]
-                response = await model_svc.chat(
-                    agent.model_provider_id, agent.model_name, messages, max_tokens=50,
-                )
+                try:
+                    response = await model_svc.chat_by_agent(
+                        agent, messages, max_tokens=50,
+                    )
+                except AgentModelNotConfigured:
+                    logger.warning(
+                        "title_gen_no_model_configured",
+                        conversation_id=conversation_id,
+                        agent_id=str(conv.agent_id),
+                    )
+                    return  # permanent error — do not retry
                 title = response["choices"][0]["message"]["content"].strip()[:200]
 
                 await db.execute(
@@ -120,9 +128,17 @@ def summarize_conversation(self, conversation_id: str):
                     {"role": "system", "content": SUMMARY_SYSTEM},
                     {"role": "user", "content": conversation_text},
                 ]
-                response = await model_svc.chat(
-                    agent.model_provider_id, agent.model_name, messages, max_tokens=500,
-                )
+                try:
+                    response = await model_svc.chat_by_agent(
+                        agent, messages, max_tokens=500,
+                    )
+                except AgentModelNotConfigured:
+                    logger.warning(
+                        "summarize_no_model_configured",
+                        conversation_id=conversation_id,
+                        agent_id=str(conv.agent_id),
+                    )
+                    return  # permanent error — do not retry
                 summary = response["choices"][0]["message"]["content"].strip()
 
                 await db.execute(

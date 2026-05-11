@@ -195,6 +195,8 @@ async def _run_single_question(
         "query": question.question,
         "kb_ids": [str(kb.id)],
         "top_k": 5,
+        # 黄金集评估批跑不是真实用户使用，跳过治理事件 + 标记 is_test
+        "is_test": True,
     }
     if kb.embedding_model_id:
         retrieval_kwargs["embedding_model_registry_id"] = kb.embedding_model_id

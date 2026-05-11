@@ -83,11 +83,17 @@ async def _run_chunk_score_rebuild(
             for cid, etype, ts in last_ts.all():
                 last_map.setdefault(cid, {})[etype] = ts
 
-            # 4. Fetch static scores (needed for composite)
+            # 4. Fetch static scores (needed for composite) — Plan 39 跳过
+            #    review_excluded chunks（pending/rejected 内容不算治理动态分）
             static_rows = await db.execute(
-                select(Chunk.id, Chunk.quality_score).where(Chunk.id.in_(dirty_ids))
+                select(Chunk.id, Chunk.quality_score).where(
+                    Chunk.id.in_(dirty_ids),
+                    Chunk.review_excluded.is_(False),
+                )
             )
             static_map = {r[0]: r[1] for r in static_rows.all()}
+            # 仅对 visible chunks 进入 rebuild 步骤
+            dirty_ids = [cid for cid in dirty_ids if cid in static_map]
 
             # 5. Recompute + bulk update
             for cid in dirty_ids:

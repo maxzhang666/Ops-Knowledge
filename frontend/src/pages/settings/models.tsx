@@ -1,32 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Plus, Trash2, PlayCircle, CheckCircle2, XCircle, Loader2,
-  Save, Pencil, Search, Check,
+  Save, Pencil, Search, Check, ChevronDown,
 } from "lucide-react"
 import { toast } from "sonner"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogDescription, DialogFooter,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { LoadingSpinner } from "@/components/shared/loading-spinner"
+  Button, Card, Tag, Modal, Input, Select, Switch, Tabs, TabPane,
+  Dropdown, Table, Spin,
+} from "@douyinfe/semi-ui"
+import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { modelApi, type ModelProvider, type ProviderTypeSchema, type RegistryEntry } from "@/api/model"
 import { systemApi } from "@/api/system"
 
-const TYPE_BADGE: Record<string, { label: string; variant: "default" | "secondary" | "outline" }> = {
-  llm: { label: "LLM", variant: "default" },
-  embedding: { label: "Embedding", variant: "secondary" },
-  reranker: { label: "Reranker", variant: "outline" },
+const TYPE_TAG: Record<string, { label: string; color: "blue" | "violet" | "grey" }> = {
+  llm: { label: "LLM", color: "blue" },
+  embedding: { label: "Embedding", color: "violet" },
+  reranker: { label: "Reranker", color: "grey" },
 }
 
 // ─── Providers Tab ───────────────────────────────────────────────
@@ -44,7 +34,6 @@ function ProvidersTab() {
   const [editingProvider, setEditingProvider] = useState<ModelProvider | null>(null)
   const [formName, setFormName] = useState("")
   const [formType, setFormType] = useState("")
-  // Values keyed by backend field name (api_key, base_url, api_version, ...)
   const [formValues, setFormValues] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
 
@@ -96,7 +85,6 @@ function ProvidersTab() {
     setFormType(val)
     const schema = providerTypes.find((t) => t.type === val)
     if (!schema) return
-    // Seed fields with declared defaults unless user already entered something
     setFormValues((prev) => {
       const next = { ...prev }
       for (const f of schema.fields) {
@@ -109,7 +97,6 @@ function ProvidersTab() {
   async function handleSave() {
     setSaving(true)
     try {
-      // Pack non-core fields (api_version, etc.) into extra_config
       const extra: Record<string, string> = {}
       for (const f of typeSchema?.fields ?? []) {
         if (f.name === "api_key" || f.name === "base_url") continue
@@ -118,9 +105,6 @@ function ProvidersTab() {
       }
 
       if (editingProvider) {
-        // PATCH — send only the fields the user actually changed. Backend
-        // schema has extra=forbid so undeclared keys return 422 instead of
-        // being silently dropped.
         const patch: Record<string, unknown> = {}
         const name = formName.trim()
         if (name !== editingProvider.name) patch.name = name
@@ -138,7 +122,6 @@ function ProvidersTab() {
         await modelApi.update(editingProvider.id, patch)
         toast.success("供应商已更新")
       } else {
-        // POST — create path uses full payload (required fields + optionals).
         await modelApi.create({
           name: formName.trim(),
           type: formType,
@@ -161,9 +144,6 @@ function ProvidersTab() {
     setTestingId(id)
     try {
       const r = await modelApi.test(id)
-      // "error" is definitely a fail. "skipped" means no model of that type
-      // is registered — not a failure (provider may only offer LLM, etc.).
-      // Green only if at least one capability tested OK and none errored.
       const tested = [r.llm, r.embedding].filter((s) => s === "ok").length
       const errored = [r.llm, r.embedding].filter((s) => s === "error").length
       const ok = errored === 0 && tested > 0
@@ -191,112 +171,116 @@ function ProvidersTab() {
     load()
   }
 
-  if (loading) return <LoadingSpinner className="py-16" />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spin size="large" />
+      </div>
+    )
+  }
 
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold">供应商列表</h2>
-        <Button onClick={openCreate}>
-          <Plus className="mr-1 size-4" /> 添加供应商
+        <Button theme="solid" type="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
+          添加供应商
         </Button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {providers.map((p) => (
-          <Card key={p.id} size="sm">
-            <CardHeader className="pb-2">
+          <Card
+            key={p.id}
+            title={
               <div className="flex items-center gap-2">
-                <CardTitle className="text-base">{p.name}</CardTitle>
-                <Badge variant="secondary">{p.type}</Badge>
+                <span>{p.name}</span>
+                <Tag>{p.type}</Tag>
               </div>
-            </CardHeader>
-            <CardContent>
-              <p className="mb-3 text-xs text-muted-foreground">
-                创建于 {new Date(p.created_at).toLocaleDateString("zh-CN")}
-              </p>
-              <div className="flex flex-wrap items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
-                  <Pencil className="mr-1 size-3.5" /> 编辑
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => handleTest(p.id)} disabled={testingId === p.id}>
-                  {testingId === p.id
-                    ? <Loader2 className="mr-1 size-3.5 animate-spin" />
-                    : <PlayCircle className="mr-1 size-3.5" />}
-                  测试连接
-                </Button>
-                {/* Models are managed via the Models tab — no sync button here */}
-                <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(p.id)}>
-                  <Trash2 className="size-3.5" />
-                </Button>
+            }
+          >
+            <p className="mb-3 text-xs text-muted-foreground">
+              创建于 {new Date(p.created_at).toLocaleDateString("zh-CN")}
+            </p>
+            <div className="flex flex-wrap items-center gap-1">
+              <Button theme="borderless" icon={<Pencil className="size-3.5" />} onClick={() => openEdit(p)}>
+                编辑
+              </Button>
+              <Button
+                theme="borderless"
+                icon={
+                  testingId === p.id
+                    ? <Loader2 className="size-3.5 animate-spin" />
+                    : <PlayCircle className="size-3.5" />
+                }
+                onClick={() => handleTest(p.id)}
+                disabled={testingId === p.id}
+              >
+                测试连接
+              </Button>
+              <Button
+                theme="borderless"
+                icon={<Trash2 className="size-3.5" />}
+                onClick={() => setDeleteTarget(p.id)}
+              />
+            </div>
+            {testResults[p.id] && (
+              <div className="mt-2 flex items-center gap-1.5 text-xs">
+                {testResults[p.id].ok
+                  ? <CheckCircle2 className="size-3.5 text-green-500" />
+                  : <XCircle className="size-3.5 text-red-500" />}
+                <span>{testResults[p.id].msg}</span>
               </div>
-              {testResults[p.id] && (
-                <div className="mt-2 flex items-center gap-1.5 text-xs">
-                  {testResults[p.id].ok
-                    ? <CheckCircle2 className="size-3.5 text-green-500" />
-                    : <XCircle className="size-3.5 text-red-500" />}
-                  <span>{testResults[p.id].msg}</span>
-                </div>
-              )}
-            </CardContent>
+            )}
           </Card>
         ))}
       </div>
 
-      {/* Create / Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) setDialogOpen(false) }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editingProvider ? "编辑供应商" : "添加供应商"}</DialogTitle>
-            <DialogDescription>
-              {editingProvider ? "修改供应商配置" : "配置新的模型 API 供应商"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-2">
-                <Label>名称</Label>
-                <Input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="My Provider" />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label>类型</Label>
-                <Select value={formType || undefined} onValueChange={(v) => v && handleTypeChange(v)}>
-                  <SelectTrigger className="w-full">
-                    {formType
-                      ? <span>{providerTypes.find((t) => t.type === formType)?.label ?? formType}</span>
-                      : <SelectValue placeholder="选择供应商类型" />}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {providerTypes.map((t) => (
-                      <SelectItem key={t.type} value={t.type}>{t.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+      <Modal
+        visible={dialogOpen}
+        onCancel={() => setDialogOpen(false)}
+        onOk={handleSave}
+        title={editingProvider ? "编辑供应商" : "添加供应商"}
+        confirmLoading={saving}
+        okText="保存"
+        cancelText="取消"
+        okButtonProps={{ disabled: !formName || !formType || saving }}
+        maskClosable={false}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">名称</label>
+              <Input value={formName} onChange={setFormName} placeholder="My Provider" />
             </div>
-            {typeSchema?.fields.map((f) => (
-              <div key={f.name} className="flex flex-col gap-2">
-                <Label>
-                  {f.label ?? f.name}
-                  {f.required && <span className="ml-1 text-destructive">*</span>}
-                </Label>
-                <Input
-                  type={f.type === "password" ? "text" : f.type === "url" ? "url" : "text"}
-                  value={formValues[f.name] ?? ""}
-                  onChange={(e) => setFormValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
-                  placeholder={f.placeholder ?? f.default ?? ""}
-                />
-              </div>
-            ))}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">类型</label>
+              <Select
+                value={formType || undefined}
+                onChange={(v) => v && handleTypeChange(v as string)}
+                placeholder="选择供应商类型"
+              >
+                {providerTypes.map((t) => (
+                  <Select.Option key={t.type} value={t.type}>{t.label}</Select.Option>
+                ))}
+              </Select>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
-            <Button onClick={handleSave} disabled={!formName || !formType || saving}>
-              {saving ? "保存中..." : "保存"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          {typeSchema?.fields.map((f) => (
+            <div key={f.name} className="flex flex-col gap-2">
+              <label className="text-sm font-medium">
+                {f.label ?? f.name}
+                {f.required && <span className="ml-1 text-red-500">*</span>}
+              </label>
+              <Input
+                value={formValues[f.name] ?? ""}
+                onChange={(value) => setFormValues((prev) => ({ ...prev, [f.name]: value }))}
+                placeholder={f.placeholder ?? f.default ?? ""}
+              />
+            </div>
+          ))}
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={!!deleteTarget}
@@ -318,25 +302,20 @@ function ModelsTab() {
   const [providers, setProviders] = useState<ModelProvider[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Defaults
   const [defaultLlmId, setDefaultLlmId] = useState("")
   const [defaultEmbId, setDefaultEmbId] = useState("")
   const [savingDefaults, setSavingDefaults] = useState(false)
   const [defaultsJustSaved, setDefaultsJustSaved] = useState(false)
 
-  // Filters
   const [filterType, setFilterType] = useState("")
   const [filterProvider, setFilterProvider] = useState("")
   const [searchText, setSearchText] = useState("")
 
-  // Inline edit
   const [editingAlias, setEditingAlias] = useState<string | null>(null)
   const [aliasValue, setAliasValue] = useState("")
 
-  // Delete
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
-  // Add model dialog
   const [addOpen, setAddOpen] = useState(false)
   const [addProviderId, setAddProviderId] = useState("")
   const [addModelType, setAddModelType] = useState<"llm" | "embedding" | "reranker">("llm")
@@ -412,9 +391,8 @@ function ModelsTab() {
     }
   }
 
-  async function handleCycleType(entry: RegistryEntry) {
-    const order: RegistryEntry["model_type"][] = ["llm", "embedding", "reranker"]
-    const next = order[(order.indexOf(entry.model_type) + 1) % order.length]
+  async function handleSetType(entry: RegistryEntry, next: RegistryEntry["model_type"]) {
+    if (next === entry.model_type) return
     try {
       const updated = await modelApi.updateRegistryEntry(entry.id, { model_type: next })
       setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
@@ -462,7 +440,6 @@ function ModelsTab() {
         base_url: provider.base_url || undefined,
         api_key: provider.api_key || undefined,
       })
-      // Filter out already-registered models for this provider
       const existingIds = new Set(entries.filter((e) => e.provider_id === addProviderId).map((e) => e.model_id))
       const available = res.models.filter((m) => !existingIds.has(m.id))
       setDiscoveredModels(available)
@@ -511,280 +488,313 @@ function ModelsTab() {
     }
   }
 
-  if (loading) return <LoadingSpinner className="py-16" />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  // Table columns
+  const columns: ColumnProps<RegistryEntry>[] = [
+    {
+      title: "启用",
+      dataIndex: "is_enabled",
+      width: 80,
+      align: "center",
+      render: (_v, entry) => (
+        <Switch checked={entry.is_enabled} onChange={() => handleToggle(entry)} />
+      ),
+    },
+    {
+      title: "模型名",
+      dataIndex: "model_id",
+      render: (text: string) => <span className="font-mono text-xs">{text}</span>,
+    },
+    {
+      title: "别名",
+      dataIndex: "display_name",
+      render: (_v, entry) => editingAlias === entry.id ? (
+        <Input
+          value={aliasValue}
+          onChange={setAliasValue}
+          onBlur={() => handleSaveAlias(entry.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSaveAlias(entry.id)
+            if (e.key === "Escape") setEditingAlias(null)
+          }}
+          autoFocus
+          size="small"
+        />
+      ) : (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded px-1 text-xs hover:bg-muted"
+          onClick={() => { setEditingAlias(entry.id); setAliasValue(entry.display_name || "") }}
+        >
+          {entry.display_name || <span className="text-muted-foreground">-</span>}
+          <Pencil className="size-3 text-muted-foreground" />
+        </button>
+      ),
+    },
+    {
+      title: "类型",
+      dataIndex: "model_type",
+      width: 130,
+      render: (_v, entry) => (
+        <Dropdown
+          trigger="click"
+          position="bottomLeft"
+          render={
+            <Dropdown.Menu>
+              {(["llm", "embedding", "reranker"] as const).map((t) => (
+                <Dropdown.Item
+                  key={t}
+                  onClick={() => handleSetType(entry, t)}
+                  disabled={t === entry.model_type}
+                >
+                  {t === entry.model_type && <Check className="mr-2 size-3.5 inline" />}
+                  <span className={t === entry.model_type ? "" : "ml-[22px]"}>
+                    {TYPE_TAG[t].label}
+                  </span>
+                </Dropdown.Item>
+              ))}
+            </Dropdown.Menu>
+          }
+        >
+          <button
+            type="button"
+            className="inline-flex items-center gap-1"
+            title="点击切换模型类型"
+          >
+            <Tag color={TYPE_TAG[entry.model_type]?.color ?? "grey"}>
+              {TYPE_TAG[entry.model_type]?.label ?? entry.model_type}
+            </Tag>
+            <ChevronDown className="size-3 text-muted-foreground" />
+          </button>
+        </Dropdown>
+      ),
+    },
+    {
+      title: "来源",
+      dataIndex: "provider_name",
+      render: (_v, entry) =>
+        <span className="text-xs text-muted-foreground">
+          {entry.provider_name || providerNames.get(entry.provider_id) || "-"}
+        </span>,
+    },
+    {
+      title: "操作",
+      dataIndex: "_op",
+      width: 80,
+      align: "center",
+      render: (_v, entry) => (
+        <Button
+          theme="borderless"
+          icon={<Trash2 className="size-3.5" />}
+          onClick={() => setDeleteTarget(entry.id)}
+        />
+      ),
+    },
+  ]
 
   return (
     <div className="flex flex-col gap-6">
       {/* System Defaults */}
-      <Card>
-        <CardHeader>
-          <CardTitle>默认模型设置</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <Label>默认 LLM 模型</Label>
-              <Select value={defaultLlmId || undefined} onValueChange={(v) => v != null && setDefaultLlmId(v)}>
-                <SelectTrigger className="w-full">
-                  {defaultLlmId
-                    ? <span className="truncate">{(() => { const m = enabledLlms.find((e) => e.id === defaultLlmId); return m ? `${m.display_name || m.model_id} (${m.provider_name || "未知"})` : defaultLlmId })()}</span>
-                    : <SelectValue placeholder="选择默认 LLM" />}
-                </SelectTrigger>
-                <SelectContent>
-                  {enabledLlms.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.display_name || m.model_id} ({m.provider_name || providerNames.get(m.provider_id) || "未知"})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label>默认 Embedding 模型</Label>
-              <Select value={defaultEmbId || undefined} onValueChange={(v) => v != null && setDefaultEmbId(v)}>
-                <SelectTrigger className="w-full">
-                  {defaultEmbId
-                    ? <span className="truncate">{(() => { const m = enabledEmbs.find((e) => e.id === defaultEmbId); return m ? `${m.display_name || m.model_id} (${m.provider_name || "未知"})` : defaultEmbId })()}</span>
-                    : <SelectValue placeholder="选择默认 Embedding" />}
-                </SelectTrigger>
-                <SelectContent>
-                  {enabledEmbs.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.display_name || m.model_id} ({m.provider_name || providerNames.get(m.provider_id) || "未知"})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+      <Card title="默认模型设置">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">默认 LLM 模型</label>
+            <Select
+              value={defaultLlmId || undefined}
+              onChange={(v) => v != null && setDefaultLlmId(v as string)}
+              placeholder="选择默认 LLM"
+            >
+              {enabledLlms.map((m) => (
+                <Select.Option key={m.id} value={m.id}>
+                  {m.display_name || m.model_id} ({m.provider_name || providerNames.get(m.provider_id) || "未知"})
+                </Select.Option>
+              ))}
+            </Select>
           </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">默认 Embedding 模型</label>
+            <Select
+              value={defaultEmbId || undefined}
+              onChange={(v) => v != null && setDefaultEmbId(v as string)}
+              placeholder="选择默认 Embedding"
+            >
+              {enabledEmbs.map((m) => (
+                <Select.Option key={m.id} value={m.id}>
+                  {m.display_name || m.model_id} ({m.provider_name || providerNames.get(m.provider_id) || "未知"})
+                </Select.Option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <div className="mt-4">
           <Button
-            className="mt-4"
+            theme={defaultsJustSaved ? "light" : "solid"}
+            type="primary"
+            icon={defaultsJustSaved ? <Check className="size-4" /> : <Save className="size-4" />}
             onClick={handleSaveDefaults}
             disabled={savingDefaults || defaultsJustSaved}
-            variant={defaultsJustSaved ? "outline" : "default"}
           >
-            {defaultsJustSaved
-              ? <><Check className="mr-1 size-4 text-success" /> <span className="text-success">已保存</span></>
-              : <><Save className="mr-1 size-4" /> {savingDefaults ? "保存中..." : "保存"}</>}
+            {defaultsJustSaved ? "已保存" : (savingDefaults ? "保存中..." : "保存")}
           </Button>
-        </CardContent>
+        </div>
       </Card>
 
-      {/* Model Registry Table */}
+      {/* Model Registry */}
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold">模型注册表</h2>
-          <Button onClick={openAddDialog}>
-            <Plus className="mr-1 size-4" /> 添加模型
+          <Button theme="solid" type="primary" icon={<Plus className="size-4" />} onClick={openAddDialog}>
+            添加模型
           </Button>
         </div>
 
         {/* Filters */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <Select value={filterType || "all"} onValueChange={(v) => setFilterType(v === "all" ? "" : (v ?? ""))}>
-            <SelectTrigger className="w-36">
-              {filterType && filterType !== "all"
-                ? <span>{TYPE_BADGE[filterType]?.label ?? filterType}</span>
-                : <span>全部类型</span>}
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部类型</SelectItem>
-              <SelectItem value="llm">LLM</SelectItem>
-              <SelectItem value="embedding">Embedding</SelectItem>
-              <SelectItem value="reranker">Reranker</SelectItem>
-            </SelectContent>
+          <Select
+            value={filterType || "all"}
+            onChange={(v) => setFilterType((v as string) === "all" ? "" : (v as string ?? ""))}
+            style={{ width: 144 }}
+          >
+            <Select.Option value="all">全部类型</Select.Option>
+            <Select.Option value="llm">LLM</Select.Option>
+            <Select.Option value="embedding">Embedding</Select.Option>
+            <Select.Option value="reranker">Reranker</Select.Option>
           </Select>
-          <Select value={filterProvider || "all"} onValueChange={(v) => setFilterProvider(v === "all" ? "" : (v ?? ""))}>
-            <SelectTrigger className="w-40">
-              {filterProvider && filterProvider !== "all"
-                ? <span className="truncate">{providers.find(p => p.id === filterProvider)?.name ?? filterProvider}</span>
-                : <span>全部来源</span>}
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部来源</SelectItem>
-              {providers.map((p) => (
-                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-              ))}
-            </SelectContent>
+          <Select
+            value={filterProvider || "all"}
+            onChange={(v) => setFilterProvider((v as string) === "all" ? "" : (v as string ?? ""))}
+            style={{ width: 160 }}
+          >
+            <Select.Option value="all">全部来源</Select.Option>
+            {providers.map((p) => (
+              <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
+            ))}
           </Select>
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="flex-1">
             <Input
               value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              onChange={setSearchText}
               placeholder="搜索模型..."
-              className="pl-8"
+              prefix={<Search className="ml-2 size-4 text-muted-foreground" />}
             />
           </div>
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-            {entries.length === 0 ? "点击「添加模型」从供应商获取可用模型" : "无匹配结果"}
-          </div>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
-                  <th className="w-16 px-3 py-2 text-center">启用</th>
-                  <th className="px-3 py-2">模型名</th>
-                  <th className="px-3 py-2">别名</th>
-                  <th className="w-28 px-3 py-2">类型</th>
-                  <th className="px-3 py-2">来源</th>
-                  <th className="w-16 px-3 py-2 text-center">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((entry) => (
-                  <tr key={entry.id} className="border-b last:border-b-0 hover:bg-muted/30">
-                    <td className="px-3 py-2 text-center">
-                      <Switch
-                        checked={entry.is_enabled}
-                        onCheckedChange={() => handleToggle(entry)}
-                      />
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs">{entry.model_id}</td>
-                    <td className="px-3 py-2">
-                      {editingAlias === entry.id ? (
-                        <Input
-                          value={aliasValue}
-                          onChange={(e) => setAliasValue(e.target.value)}
-                          onBlur={() => handleSaveAlias(entry.id)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveAlias(entry.id); if (e.key === "Escape") setEditingAlias(null) }}
-                          className="h-7 text-xs"
-                          autoFocus
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 rounded px-1 text-xs hover:bg-muted"
-                          onClick={() => { setEditingAlias(entry.id); setAliasValue(entry.display_name || "") }}
-                        >
-                          {entry.display_name || <span className="text-muted-foreground">-</span>}
-                          <Pencil className="size-3 text-muted-foreground" />
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <button type="button" onClick={() => handleCycleType(entry)}>
-                        <Badge variant={TYPE_BADGE[entry.model_type]?.variant ?? "secondary"}>
-                          {TYPE_BADGE[entry.model_type]?.label ?? entry.model_type}
-                        </Badge>
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {entry.provider_name || providerNames.get(entry.provider_id) || "-"}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(entry.id)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <Table
+          columns={columns}
+          dataSource={filtered}
+          rowKey="id"
+          pagination={false}
+          empty={entries.length === 0 ? "点击「添加模型」从供应商获取可用模型" : "无匹配结果"}
+        />
       </div>
 
-      {/* Add Model Dialog */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>添加模型</DialogTitle>
-            <DialogDescription>从已配置的供应商中获取并添加模型</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-2">
-                <Label>选择供应商</Label>
-                <Select value={addProviderId || undefined} onValueChange={(v) => { if (v) { setAddProviderId(v); setDiscoveredModels([]); setSelectedModelIds(new Set()) } }}>
-                  <SelectTrigger className="w-full">
-                    {addProviderId
-                      ? <span className="truncate">{providers.find((p) => p.id === addProviderId)?.name ?? addProviderId}</span>
-                      : <SelectValue placeholder="选择供应商" />}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {providers.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name} ({p.type})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label>模型类型</Label>
-                <Select value={addModelType} onValueChange={(v) => v && setAddModelType(v as "llm" | "embedding" | "reranker")}>
-                  <SelectTrigger className="w-full">
-                    {addModelType
-                      ? <span>{TYPE_BADGE[addModelType]?.label ?? addModelType}</span>
-                      : <SelectValue />}
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="llm">LLM</SelectItem>
-                    <SelectItem value="embedding">Embedding</SelectItem>
-                    <SelectItem value="reranker">Reranker</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+      {/* Add Model Modal */}
+      <Modal
+        visible={addOpen}
+        onCancel={() => setAddOpen(false)}
+        onOk={handleAddModels}
+        title="添加模型"
+        confirmLoading={addSaving}
+        okText={selectedModelIds.size > 0 ? `添加 ${selectedModelIds.size} 个模型` : "添加"}
+        cancelText="取消"
+        okButtonProps={{ disabled: selectedModelIds.size === 0 || addSaving }}
+        width={680}
+        maskClosable={false}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">选择供应商</label>
+              <Select
+                value={addProviderId || undefined}
+                onChange={(v) => {
+                  if (v) {
+                    setAddProviderId(v as string)
+                    setDiscoveredModels([])
+                    setSelectedModelIds(new Set())
+                  }
+                }}
+                placeholder="选择供应商"
+              >
+                {providers.map((p) => (
+                  <Select.Option key={p.id} value={p.id}>{p.name} ({p.type})</Select.Option>
+                ))}
+              </Select>
             </div>
-
-            <Button
-              variant="outline"
-              onClick={handleDiscover}
-              disabled={!addProviderId || discovering}
-            >
-              {discovering
-                ? <Loader2 className="mr-1 size-4 animate-spin" />
-                : <Search className="mr-1 size-4" />}
-              {discovering ? "获取中..." : "获取模型列表"}
-            </Button>
-
-            {discoveredModels.length > 0 && (
-              <div className="rounded-lg border">
-                <div className="flex items-center justify-between border-b px-3 py-2">
-                  <span className="text-xs text-muted-foreground">
-                    {discoveredModels.length} 个可用模型，已选 {selectedModelIds.size} 个
-                  </span>
-                  <div className="flex gap-2">
-                    <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSelectedModelIds(new Set(discoveredModels.map((m) => m.id)))}>
-                      全选
-                    </button>
-                    <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSelectedModelIds(new Set())}>
-                      全不选
-                    </button>
-                  </div>
-                </div>
-                <div className="max-h-80 overflow-y-auto p-1">
-                  {discoveredModels.map((m) => (
-                    <label
-                      key={m.id}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedModelIds.has(m.id)}
-                        onChange={() => toggleModelSelection(m.id)}
-                        className="size-3.5 rounded border-border"
-                      />
-                      <span className="flex-1 truncate font-mono text-xs" title={m.id}>{m.id}</span>
-                      <Badge variant="outline" className="text-[10px]">{m.type_hint}</Badge>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">模型类型</label>
+              <Select
+                value={addModelType}
+                onChange={(v) => v && setAddModelType(v as "llm" | "embedding" | "reranker")}
+              >
+                <Select.Option value="llm">LLM</Select.Option>
+                <Select.Option value="embedding">Embedding</Select.Option>
+                <Select.Option value="reranker">Reranker</Select.Option>
+              </Select>
+            </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>取消</Button>
-            <Button onClick={handleAddModels} disabled={selectedModelIds.size === 0 || addSaving}>
-              {addSaving ? "添加中..." : `添加 ${selectedModelIds.size} 个模型`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          <Button
+            theme="light"
+            icon={discovering ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+            onClick={handleDiscover}
+            disabled={!addProviderId || discovering}
+          >
+            {discovering ? "获取中..." : "获取模型列表"}
+          </Button>
+
+          {discoveredModels.length > 0 && (
+            <div className="rounded-lg border">
+              <div className="flex items-center justify-between border-b px-3 py-2">
+                <span className="text-xs text-muted-foreground">
+                  {discoveredModels.length} 个可用模型，已选 {selectedModelIds.size} 个
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => setSelectedModelIds(new Set(discoveredModels.map((m) => m.id)))}
+                  >
+                    全选
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => setSelectedModelIds(new Set())}
+                  >
+                    全不选
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-80 overflow-y-auto p-1">
+                {discoveredModels.map((m) => (
+                  <label
+                    key={m.id}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedModelIds.has(m.id)}
+                      onChange={() => toggleModelSelection(m.id)}
+                      className="size-3.5 rounded border-border"
+                    />
+                    <span className="flex-1 truncate font-mono text-xs" title={m.id}>{m.id}</span>
+                    <Tag size="small">{m.type_hint}</Tag>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={!!deleteTarget}
@@ -803,21 +813,17 @@ function ModelsTab() {
 
 export default function ModelsPage() {
   return (
-    <Tabs defaultValue="providers">
-      <TabsList variant="line">
-        <TabsTrigger value="providers">供应商管理</TabsTrigger>
-        <TabsTrigger value="models">模型管理</TabsTrigger>
-      </TabsList>
-      <TabsContent value="providers">
+    <Tabs type="line">
+      <TabPane tab="供应商管理" itemKey="providers">
         <div className="mt-4">
           <ProvidersTab />
         </div>
-      </TabsContent>
-      <TabsContent value="models">
+      </TabPane>
+      <TabPane tab="模型管理" itemKey="models">
         <div className="mt-4">
           <ModelsTab />
         </div>
-      </TabsContent>
+      </TabPane>
     </Tabs>
   )
 }

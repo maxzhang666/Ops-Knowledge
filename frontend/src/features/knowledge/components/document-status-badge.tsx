@@ -12,12 +12,13 @@ const statusConfig: Record<DocumentStatus, { label: string; variant: BadgeVarian
 
 interface DocumentStatusBadgeProps {
   status: DocumentStatus
+  className?: string
 }
 
-export function DocumentStatusBadge({ status }: DocumentStatusBadgeProps) {
+export function DocumentStatusBadge({ status, className }: DocumentStatusBadgeProps) {
   const config = statusConfig[status]
   return (
-    <Badge variant={config.variant}>
+    <Badge variant={config.variant} className={className}>
       {status === "processing" && (
         <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
       )}

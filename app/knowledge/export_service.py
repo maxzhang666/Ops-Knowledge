@@ -88,7 +88,10 @@ class ExportService:
             for c in chunks:
                 lines.append(json.dumps({
                     "id": str(c.id),
-                    "document_id": str(c.document_id),
+                    # Plan 40 M3 — chunks 多态 FK；导出文件型 KB 时 unit_id == doc_id
+                    "document_id": str(c.unit_id),
+                    "unit_type": c.unit_type,
+                    "unit_id": str(c.unit_id),
                     "folder_id": str(c.folder_id) if c.folder_id else None,
                     "content": c.content,
                     "level": c.level,
@@ -194,7 +197,9 @@ class ExportService:
                         if cd.get("folder_id") else None
                     )
                     chunk = Chunk(
-                        document_id=new_doc_id,
+                        # Plan 40 M3 — document_id 已 drop
+                        unit_type="document",
+                        unit_id=new_doc_id,
                         knowledge_base_id=kb.id,
                         folder_id=mapped_chunk_folder,
                         content=cd["content"],

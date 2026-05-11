@@ -23,8 +23,8 @@ export default function ProfilePage() {
       setErrorMsg("两次输入的密码不一致")
       return
     }
-    if (newPassword.length < 8) {
-      setErrorMsg("密码长度至少 8 位")
+    if (newPassword.length < 6) {
+      setErrorMsg("密码长度至少 6 位")
       return
     }
 

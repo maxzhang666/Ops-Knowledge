@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import structlog
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -83,6 +83,21 @@ class GovernanceService:
         alerts = await self._collect_alerts(kb, stats, now)
         trend = await self._compute_trend(kb, now)
 
+        # Plan 32 M2 — 顺手把健康分写回 KB 缓存字段，列表 API 零额外查询。
+        # best-effort：失败不影响主返回，下次任务/详情页访问会再覆盖。
+        try:
+            await self.db.execute(
+                update(KnowledgeBase)
+                .where(KnowledgeBase.id == kb.id)
+                .values(
+                    health_score=int(round(health)),
+                    health_score_updated_at=now,
+                )
+            )
+            await self.db.commit()
+        except Exception:
+            logger.debug("health_score_writeback_failed", kb_id=str(kb.id), exc_info=True)
+
         return GovernanceHealthResponse(
             kb_id=kb.id,
             health_score=health,
@@ -126,12 +141,15 @@ class GovernanceService:
         stale_cutoff = now - timedelta(days=expiration_days)
         avail_cutoff = now - timedelta(days=AVAILABILITY_WINDOW_DAYS)
 
-        # Chunk-level aggregates
+        # Chunk-level aggregates — Plan 39 跳过 review_excluded 内容（pending/rejected 不污染治理画像）
         row = (await self.db.execute(
             select(
                 func.count(Chunk.id),
                 func.avg(Chunk.quality_composite),
-            ).where(Chunk.knowledge_base_id == kb.id)
+            ).where(
+                Chunk.knowledge_base_id == kb.id,
+                Chunk.review_excluded.is_(False),
+            )
         )).one()
         total_chunks = int(row[0] or 0)
         avg_composite = float(row[1]) if row[1] is not None else None
@@ -140,25 +158,17 @@ class GovernanceService:
         hit_chunks = int((await self.db.execute(
             select(func.count(Chunk.id)).where(
                 Chunk.knowledge_base_id == kb.id,
+                Chunk.review_excluded.is_(False),
                 Chunk.last_hit_at.isnot(None),
                 Chunk.last_hit_at >= cold_cutoff,
             )
         )).scalar() or 0)
 
-        # Document-level
-        total_docs = int((await self.db.execute(
-            select(func.count(Document.id)).where(
-                Document.knowledge_base_id == kb.id,
-                Document.is_archived.is_(False),
-            )
-        )).scalar() or 0)
-        stale_docs = int((await self.db.execute(
-            select(func.count(Document.id)).where(
-                Document.knowledge_base_id == kb.id,
-                Document.is_archived.is_(False),
-                Document.updated_at < stale_cutoff,
-            )
-        )).scalar() or 0)
+        # Plan 40 M2 — unit-level 统计走 unit_stats 抽象层（多 source_type 适配）
+        from app.knowledge.governance.unit_stats import get_unit_stats
+        unit_stats_result = await get_unit_stats(self.db, kb, stale_cutoff)
+        total_docs = unit_stats_result.total_units
+        stale_docs = unit_stats_result.stale_units
 
         # Availability: retrievals in last 7d.
         # "total_retrievals_7d" = unique messages (≈ retrievals) that hit
@@ -218,34 +228,28 @@ class GovernanceService:
         expiration_days = int(cfg.get("expiration_threshold_days", DEFAULT_EXPIRATION_DAYS))
         stale_cutoff = now - timedelta(days=expiration_days)
 
-        # Stale documents
+        # Stale units (Plan 40 M2 — 多 source_type 适配)
         if stats.stale_docs > 0:
-            stale_rows = (await self.db.execute(
-                select(Document.id, Document.title, Document.updated_at)
-                .where(
-                    Document.knowledge_base_id == kb.id,
-                    Document.is_archived.is_(False),
-                    Document.updated_at < stale_cutoff,
-                )
-                .order_by(Document.updated_at.asc())
-                .limit(10)
-            )).all()
+            from app.knowledge.governance.unit_stats import get_stale_unit_preview
+            preview_rows = await get_stale_unit_preview(self.db, kb, stale_cutoff, limit=10)
+            unit_label = "条目" if kb.source_type == "entry" else "文档"
             alerts.append(GovernanceAlert(
                 severity="warning" if stats.stale_docs < 0.3 * max(stats.total_docs, 1) else "critical",
-                kind="stale_docs",
-                title=f"{stats.stale_docs} 份文档超过 {expiration_days} 天未更新",
+                kind="stale_docs",  # alert kind 保留兼容（前端按 KB.source_type 选文案）
+                title=f"{stats.stale_docs} 份{unit_label}超过 {expiration_days} 天未更新",
                 count=stats.stale_docs,
                 preview=[
-                    {"id": str(r[0]), "title": r[1], "updated_at": r[2].isoformat()}
-                    for r in stale_rows
+                    {"id": str(r.unit_id), "title": r.title, "updated_at": r.updated_at.isoformat()}
+                    for r in preview_rows
                 ],
                 action_href=f"/knowledge/{kb.id}?filter=stale",
             ))
 
-        # Low-quality chunks (composite < threshold)
+        # Low-quality chunks (composite < threshold) — Plan 39 跳过 review_excluded
         low_q_count = int((await self.db.execute(
             select(func.count(Chunk.id)).where(
                 Chunk.knowledge_base_id == kb.id,
+                Chunk.review_excluded.is_(False),
                 Chunk.quality_composite.isnot(None),
                 Chunk.quality_composite < LOW_QUALITY_THRESHOLD,
             )
@@ -255,6 +259,7 @@ class GovernanceService:
                 select(Chunk.id, Chunk.quality_composite, Chunk.content)
                 .where(
                     Chunk.knowledge_base_id == kb.id,
+                    Chunk.review_excluded.is_(False),
                     Chunk.quality_composite.isnot(None),
                     Chunk.quality_composite < LOW_QUALITY_THRESHOLD,
                 )
@@ -277,10 +282,11 @@ class GovernanceService:
                 action_href=None,
             ))
 
-        # Cold chunks — never hit OR no hit in last 30d
+        # Cold chunks — never hit OR no hit in last 30d (Plan 39 跳过 review_excluded)
         cold_count = int((await self.db.execute(
             select(func.count(Chunk.id)).where(
                 Chunk.knowledge_base_id == kb.id,
+                Chunk.review_excluded.is_(False),
                 (Chunk.last_hit_at.is_(None)) | (Chunk.last_hit_at < cold_cutoff),
             )
         )).scalar() or 0)

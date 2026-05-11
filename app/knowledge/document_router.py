@@ -1,7 +1,6 @@
 import uuid
 
 from fastapi import APIRouter, Body, Depends, Query, Request, UploadFile, status
-from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +14,7 @@ from app.knowledge.document_service import DocumentService
 from app.core.limiter import limiter
 from app.knowledge.ingestion.tasks import process_document
 from app.core.tasks import safe_delay
-from app.knowledge.milvus.service import MilvusService
+from app.knowledge.milvus.service import MilvusService, kb_collection_name
 from app.knowledge.models import Chunk, Document
 from app.knowledge.schemas import DocumentResponse
 from app.knowledge.service import KBService
@@ -245,7 +244,9 @@ async def document_impact(
     since = now - timedelta(days=7)
 
     chunks = (await db.execute(
-        select(Chunk.id, Chunk.content).where(Chunk.document_id == doc_id)
+        select(Chunk.id, Chunk.content).where(
+            Chunk.unit_type == "document", Chunk.unit_id == doc_id,
+        )
     )).all()
     chunk_ids = [c[0] for c in chunks]
 
@@ -395,14 +396,16 @@ async def batch_delete_documents(
     doc_ids = [d.id for d in docs]
     file_paths = [d.file_path for d in docs if d.file_path]
 
-    # 1. Delete chunks from PG
+    # 1. Delete chunks from PG (Plan 40 M2 — 多态 unit FK)
     await db.execute(
-        sa_delete(Chunk).where(Chunk.document_id.in_(doc_ids))
+        sa_delete(Chunk).where(
+            Chunk.unit_type == "document", Chunk.unit_id.in_(doc_ids),
+        )
     )
 
     # 2. Delete vectors from Milvus
     cfg = await get_runtime_config(db)
-    collection_name = f"kb_{kb_id}"
+    collection_name = kb_collection_name(kb_id)
     try:
         milvus = MilvusService(runtime_cfg=cfg)
         if milvus.collection_exists(collection_name):
@@ -464,12 +467,14 @@ async def delete_document(
     if doc is None or doc.knowledge_base_id != kb_id:
         raise ValidationError("Document not found")
 
-    # 1. Delete chunks from PG
-    await db.execute(sa_delete(Chunk).where(Chunk.document_id == doc_id))
+    # 1. Delete chunks from PG (Plan 40 M2 — 多态 unit FK)
+    await db.execute(sa_delete(Chunk).where(
+        Chunk.unit_type == "document", Chunk.unit_id == doc_id,
+    ))
 
     # 2. Delete vectors from Milvus (best-effort)
     cfg = await get_runtime_config(db)
-    collection_name = f"kb_{kb_id}"
+    collection_name = kb_collection_name(kb_id)
     try:
         milvus = MilvusService(runtime_cfg=cfg)
         if milvus.collection_exists(collection_name):
@@ -561,4 +566,7 @@ async def preview_document(
     cfg = await get_runtime_config(db)
     minio = MinIOService(cfg)
     content = await minio.download(doc.file_path)
-    return PlainTextResponse(content.decode("utf-8", errors="replace"))
+    # Return JSON envelope (frontend previewDocument types as `{content}`).
+    # Previously returned PlainTextResponse, which axios tried to JSON-parse
+    # and choked on with errors like `Unexpected token '#'` for markdown.
+    return {"content": content.decode("utf-8", errors="replace")}

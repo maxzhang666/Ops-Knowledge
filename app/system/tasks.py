@@ -23,7 +23,7 @@ def disk_space_monitor():
     free_pct = usage.free / usage.total * 100
 
     if free_pct < 10:
-        sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+        sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")
         engine = create_engine(sync_url)
         try:
             with Session(engine) as session:
@@ -52,7 +52,7 @@ def consistency_scan():
     from sqlalchemy.orm import Session
 
     runtime_cfg = get_sync_runtime_config()
-    sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+    sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")  # psycopg v3
     engine = create_engine(sync_url)
     try:
         with Session(engine) as session:
@@ -91,14 +91,14 @@ def consistency_scan():
             # E8: Cross-storage consistency — orphan Milvus collections
             orphan_collections = 0
             try:
-                from app.knowledge.milvus.service import MilvusService
+                from app.knowledge.milvus.service import MilvusService, kb_collection_name
                 milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
                 from pymilvus import utility
                 existing_collections = utility.list_collections()
                 active_kb_ids = session.execute(
                     select(KnowledgeBase.id).where(KnowledgeBase.status != KBStatus.DELETING)
                 ).scalars().all()
-                active_names = {f"kb_{kid}" for kid in active_kb_ids}
+                active_names = {kb_collection_name(kid) for kid in active_kb_ids}
                 for coll_name in existing_collections:
                     if coll_name.startswith("kb_") and coll_name not in active_names:
                         try:
@@ -126,7 +126,7 @@ def consistency_scan():
                     kb_vectors.setdefault(kb_key, []).append((chunk_id, vector_id))
 
                 for kb_id_str, chunk_pairs in kb_vectors.items():
-                    collection_name = f"kb_{kb_id_str}"
+                    collection_name = kb_collection_name(kb_id_str)
                     try:
                         vector_ids_to_check = [vp[1] for vp in chunk_pairs]
                         existing = milvus_svc._client.get(

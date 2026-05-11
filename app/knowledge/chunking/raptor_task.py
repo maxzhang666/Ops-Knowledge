@@ -37,7 +37,7 @@ from app.knowledge.chunking.raptor import (
 
 logger = structlog.get_logger(__name__)
 
-SYNC_DB_URL = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+SYNC_DB_URL = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")  # psycopg v3
 
 
 @shared_task(name="app.knowledge.chunking.raptor_task.build_raptor_for_document")
@@ -67,9 +67,15 @@ def build_raptor_for_document(doc_id: str, kb_id: str) -> dict:
             if doc is None:
                 return {"status": "error", "message": "Document not found"}
 
+            # Plan 40 M2 — 多态 unit FK 切读
             l0_chunks = session.scalars(
                 select(Chunk)
-                .where(Chunk.document_id == doc_id, Chunk.level == 0, Chunk.vector_id.isnot(None))
+                .where(
+                    Chunk.unit_type == "document",
+                    Chunk.unit_id == doc_id,
+                    Chunk.level == 0,
+                    Chunk.vector_id.isnot(None),
+                )
                 .order_by(Chunk.position)
             ).all()
             if len(l0_chunks) < 4:
@@ -100,12 +106,19 @@ def build_raptor_for_document(doc_id: str, kb_id: str) -> dict:
 
         summarize_fn = build_default_summarize_fn()
         embed_fn = build_default_embed_fn(uuid.UUID(str(kb_id)))
-        summaries = asyncio.run(build_raptor_levels(
-            seeds,
-            summarize_fn=summarize_fn,
-            embed_fn=embed_fn,
-            max_levels=cfg.raptor_max_levels,
-        ))
+        # asyncio.Runner (PY 3.11+) drains pending tasks (httpx
+        # AsyncClient.aclose, etc.) BEFORE closing the loop. Plain
+        # asyncio.run() schedules close coroutines but tears down the
+        # loop before they get a chance to run, producing harmless but
+        # noisy "RuntimeError: Event loop is closed" tracebacks in the
+        # worker log after every RAPTOR run.
+        with asyncio.Runner() as runner:
+            summaries = runner.run(build_raptor_levels(
+                seeds,
+                summarize_fn=summarize_fn,
+                embed_fn=embed_fn,
+                max_levels=cfg.raptor_max_levels,
+            ))
         if not summaries:
             return {"status": "noop", "message": "no summaries produced"}
 
@@ -120,7 +133,9 @@ def build_raptor_for_document(doc_id: str, kb_id: str) -> dict:
                 meta = {"raptor_children": [str(m) for m in s.member_ids]}
                 chunk_rows.append(Chunk(
                     id=s.id,
-                    document_id=doc.id,
+                    # Plan 40 M3 — document_id 已 drop
+                    unit_type="document",
+                    unit_id=doc.id,
                     knowledge_base_id=doc.knowledge_base_id,
                     folder_id=doc.folder_id,
                     content=s.summary,

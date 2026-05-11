@@ -5,8 +5,33 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+// 项目级规则（feedback_dialog_no_outside_close）：所有 Dialog 禁用
+// "点击空白 / ESC / 焦点丢失" 关闭，仅显式按钮（取消 / 关闭 / 确认）触发关闭。
+// 避免编辑长文 / 表单时意外丢失输入。
+const DISMISSAL_BLOCKED_REASONS = new Set([
+  "outside-press",
+  "escape-key",
+  "focus-out",
+])
+
+function Dialog({ onOpenChange, ...props }: DialogPrimitive.Root.Props) {
+  const wrappedOnOpenChange: DialogPrimitive.Root.Props["onOpenChange"] = (
+    open, eventDetails,
+  ) => {
+    if (!open && eventDetails && DISMISSAL_BLOCKED_REASONS.has(eventDetails.reason)) {
+      // 阻止意外关闭
+      return
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+  return (
+    <DialogPrimitive.Root
+      data-slot="dialog"
+      disablePointerDismissal
+      onOpenChange={wrappedOnOpenChange}
+      {...props}
+    />
+  )
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {

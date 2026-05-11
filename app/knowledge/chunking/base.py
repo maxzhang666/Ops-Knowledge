@@ -9,6 +9,11 @@ class ChunkResult:
     position: int = 0
     metadata: dict = field(default_factory=dict)
     parent_chunk_id: str | None = None
+    # Logical id used for parent-child linking. ONLY set by strategies that
+    # produce hierarchical results (e.g. CompositeStrategy on the parent
+    # row). Children reference it via parent_chunk_id; the ingestion task
+    # maps both to the same real DB uuid so FK constraints hold.
+    id: str | None = None
 
 
 class ChunkingStrategy(ABC):

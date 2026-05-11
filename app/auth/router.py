@@ -88,7 +88,9 @@ async def me(current_user: User = Depends(get_current_user)):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str = Field(..., min_length=8, max_length=72)
+    # 最短 6 位（产品策略，比之前 8 位放宽）；max_length=72 是 bcrypt 物理硬限
+    # （超过 72 byte 会被静默截断，两个不同长密码可能 hash 一致），不可取消
+    new_password: str = Field(..., min_length=6, max_length=72)
 
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)

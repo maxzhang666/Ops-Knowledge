@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { LoadingSpinner } from "@/components/shared/loading-spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { systemApi, type HealthResponse } from "@/api/system"
 
 const svcStatusColor: Record<string, string> = {
@@ -133,7 +134,11 @@ export default function SystemPage() {
     )
   }
 
-  if (loadingHealth && loadingCfg) return <LoadingSpinner className="py-16" />
+  // Cfg drives the form's initial values — block on it. Health is independent
+  // (it polls Milvus/MinIO and is the slow one); render skeletons in-place
+  // instead of leaving the cards block blank, which made the page feel like
+  // it was missing content until health arrived.
+  if (loadingCfg) return <LoadingSpinner className="py-16" />
 
   return (
     <div className="space-y-6">
@@ -151,21 +156,29 @@ export default function SystemPage() {
             </Button>
           </div>
         </div>
-        {health && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {Object.entries(health.services).map(([name, status]) => (
-              <Card key={name} className="p-3">
-                <div className="flex items-center gap-2">
-                  <span className={`inline-block h-2 w-2 rounded-full ${svcStatusColor[status] ?? "bg-gray-400"}`} />
-                  <span className="text-sm font-medium capitalize">{name}</span>
-                  <Badge variant={status === "ok" ? "default" : "destructive"} className="ml-auto text-[10px]">
-                    {svcStatusLabel[status] ?? status}
-                  </Badge>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {health
+            ? Object.entries(health.services).map(([name, status]) => (
+                <Card key={name} className="p-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-block h-2 w-2 rounded-full ${svcStatusColor[status] ?? "bg-gray-400"}`} />
+                    <span className="text-sm font-medium capitalize">{name}</span>
+                    <Badge variant={status === "ok" ? "default" : "destructive"} className="ml-auto text-[10px]">
+                      {svcStatusLabel[status] ?? status}
+                    </Badge>
+                  </div>
+                </Card>
+              ))
+            : Array.from({ length: 5 }).map((_, i) => (
+                <Card key={i} className="p-3">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-2 w-2 rounded-full" />
+                    <Skeleton className="h-4 w-16" />
+                    <Skeleton className="ml-auto h-4 w-10" />
+                  </div>
+                </Card>
+              ))}
+        </div>
       </div>
 
       <Separator />

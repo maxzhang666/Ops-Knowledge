@@ -124,3 +124,27 @@ async def delete_kb(
     await svc.mark_kb_deleting(kb_id)
     safe_delay(cascade_delete_kb, str(kb_id))
     return {"detail": "Knowledge base deletion initiated"}
+
+
+@router.post("/{kb_id}/reindex", status_code=status.HTTP_202_ACCEPTED)
+async def reindex_kb_endpoint(
+    kb_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """重建整个 KB 的 milvus collection（drop + 全量 re-embed + atomic swap）。
+
+    用途：
+    - 清理孤儿向量（如历史 entry 编辑残留的旧向量）
+    - 切换 embedding 模型后重建索引
+    - milvus 数据损坏修复
+
+    异步执行；返回 celery task_id 供查询进度。"""
+    from app.knowledge.embedding.tasks import reindex_kb as reindex_task
+
+    svc = KBService(db)
+    kb = await svc.get_kb(kb_id)
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
+
+    result = reindex_task.delay(str(kb_id))
+    return {"task_id": result.id, "status": "accepted"}

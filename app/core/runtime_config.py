@@ -49,7 +49,9 @@ def get_sync_runtime_config() -> dict:
 
     from app.core.config import settings
 
-    sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+    # Use psycopg v3 (already installed via requirements.txt). psycopg2 is
+    # NOT in the env — converting to "+psycopg2" raises ModuleNotFoundError.
+    sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")
     engine = create_engine(sync_url)
     try:
         with Session(engine) as session:
@@ -101,7 +103,11 @@ async def _async_subscribe_loop() -> None:
     try:
         while True:
             try:
-                client = aredis.from_url(settings.REDIS_URL)
+                client = aredis.from_url(
+                    settings.REDIS_URL,
+                    socket_keepalive=True,
+                    health_check_interval=30,
+                )
                 pubsub = client.pubsub()
                 await pubsub.subscribe(_PUBSUB_CHANNEL)
                 async for msg in pubsub.listen():
@@ -137,13 +143,24 @@ def start_async_subscriber(loop: asyncio.AbstractEventLoop | None = None) -> asy
 
 
 def _sync_subscribe_loop() -> None:
-    """Thread loop: subscribe and invalidate (for Celery workers)."""
+    """Thread loop: subscribe and invalidate (for Celery workers).
+
+    PubSub is a long-lived blocking read; ``socket_timeout`` MUST be None,
+    otherwise ``listen()`` raises ``TimeoutError`` every N seconds when no
+    messages flow. Liveness is preserved via ``health_check_interval``
+    (server-side PING) + ``socket_keepalive`` (TCP-level) so dead
+    connections are detected without aborting idle reads.
+    """
     import redis
 
     from app.core.config import settings
     while True:
         try:
-            client = redis.from_url(settings.REDIS_URL, socket_timeout=30)
+            client = redis.from_url(
+                settings.REDIS_URL,
+                socket_keepalive=True,
+                health_check_interval=30,
+            )
             pubsub = client.pubsub()
             pubsub.subscribe(_PUBSUB_CHANNEL)
             for msg in pubsub.listen():

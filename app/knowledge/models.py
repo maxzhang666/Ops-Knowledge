@@ -54,8 +54,18 @@ class KnowledgeBase(Base, UUIDMixin, TimestampMixin):
     governance_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Plan 29 — knowledge review workflow opt-in. False keeps legacy behavior.
     review_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Plan 40 M1 — 决定 IngestionPlugin。建库后不可改（unit 数据形态固定）
+    source_type: Mapped[str] = mapped_column(
+        String(20), default="file", nullable=False, server_default="file"
+    )
     document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Plan 32 M2 健康分缓存（0-100）— 列表 API 零额外查询。
+    # NULL = 从未计算过；写回触发点见 governance/service.py compute_health。
+    health_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    health_score_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[KBStatus] = mapped_column(
         Enum(KBStatus, name="kb_status", values_callable=lambda e: [x.value for x in e]), default=KBStatus.ACTIVE, nullable=False
     )
@@ -131,6 +141,11 @@ class Document(Base, UUIDMixin, TimestampMixin):
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Plan 39 M2 — 通知去重锚点：进入 pending 时 reset；
+    # should_notify_review_pending() 查 notifications.created_at > 此值 决定是否重发
+    last_pending_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(
@@ -139,7 +154,69 @@ class Document(Base, UUIDMixin, TimestampMixin):
 
     knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase", back_populates="documents")
     folder: Mapped["Folder | None"] = relationship("Folder", back_populates="documents")
-    chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
+    # Plan 40 M3 — chunks 反向关系移除（document_id FK 已 drop，
+    # cascade 改走 chunks.knowledge_base_id ON DELETE CASCADE，service 层手动
+    # DELETE chunks WHERE unit_type='document' AND unit_id=doc.id）
+
+
+class KnowledgeEntry(Base, UUIDMixin, TimestampMixin):
+    """Plan 41 — 条目型 KB 独占。每条 entry 是用户在线编辑的短词条
+    (FAQ / SOP / 客服话术)。检索路径与文件型一致（chunks 表多态 FK 关联）。"""
+    __tablename__ = "knowledge_entries"
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Plan 41 — 条目目录化：复用 folders 表。NULL = 根目录
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("folders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    token_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+    )
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false",
+    )
+    # Plan 41 — 条目处理状态：pending → processing → completed / error
+    # 跟用户看的"条目可检索"的过程同步
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", nullable=False, server_default="pending",
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Plan 32 M3 lifecycle 两阶段（与 documents 对齐）
+    is_stale: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false",
+    )
+    stale_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    # Plan 29 review 字段（镜像 documents）
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Plan 39 通知去重锚点
+    last_pending_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False,
+    )
+
+    knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase")
 
 
 class Chunk(Base):
@@ -148,9 +225,11 @@ class Chunk(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    # Plan 40 M3 — chunks 多态 FK 已切换：unit_type + unit_id 替代 document_id。
+    # document_id 列已 drop（migration 0052），SA model 不再保留该字段。
+    # 删除 unit 时由 cascade_delete_unit celery task 处理 chunks 清理。
+    unit_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    unit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -178,11 +257,15 @@ class Chunk(Base):
     quality_composite: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_adopted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Plan 39 M1 — 审核期内容隔离派生列。pending unit 的 chunks 置 true，
+    # 不参与召回 / 命中统计 / 治理动态分。由 ReviewService 维护。
+    review_excluded: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    document: Mapped["Document"] = relationship("Document", back_populates="chunks")
     knowledge_base: Mapped["KnowledgeBase"] = relationship("KnowledgeBase")
     parent_chunk: Mapped["Chunk | None"] = relationship("Chunk", remote_side="Chunk.id")

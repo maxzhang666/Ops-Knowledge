@@ -16,11 +16,11 @@ import uuid
 from datetime import datetime, timezone
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
-from app.knowledge.models import Document, KnowledgeBase
+from app.knowledge.models import Chunk, Document, KnowledgeBase
 from app.system.models import Notification
 
 logger = structlog.get_logger(__name__)
@@ -58,6 +58,8 @@ class ReviewService:
         doc.reviewer_id = None
         doc.reviewed_at = None
         doc.review_comment = None
+        doc.last_pending_started_at = datetime.now(timezone.utc)
+        await self._set_chunks_excluded(doc_id, True)
         await self.db.flush()
         await self._notify_reviewers(kb, doc)
         return doc
@@ -78,6 +80,35 @@ class ReviewService:
     ) -> Document:
         return await self._decide(doc_id, reviewer_id, REVIEW_REJECTED, comment)
 
+    async def add_comment(
+        self,
+        doc_id: uuid.UUID,
+        reviewer_id: uuid.UUID,
+        comment: str,
+    ) -> Document:
+        """Plan 39 §14.5 — 评论但不变状态：用于"建议作者修改但不一票否决"
+        的轻量反馈。覆盖 review_comment 并通知作者。"""
+        doc = await self._get_doc(doc_id)
+        doc.review_comment = comment
+        await self.db.flush()
+        # 通知作者：有审核员留言
+        from app.system.models import Notification
+        self.db.add(Notification(
+            user_id=doc.created_by,
+            type="review_comment",
+            title=f"文档「{doc.title}」收到审核反馈",
+            content=comment,
+            priority="normal",
+            resource_type="document",
+            resource_id=doc.id,
+        ))
+        await self.db.flush()
+        logger.info(
+            "review_comment_added",
+            doc_id=str(doc_id), reviewer=str(reviewer_id),
+        )
+        return doc
+
     async def request_re_review(self, doc_id: uuid.UUID) -> Document:
         """运维路径：内容大改后强制再审。"""
         doc = await self._get_doc(doc_id)
@@ -88,6 +119,8 @@ class ReviewService:
         doc.reviewer_id = None
         doc.reviewed_at = None
         doc.review_comment = None
+        doc.last_pending_started_at = datetime.now(timezone.utc)
+        await self._set_chunks_excluded(doc_id, True)
         await self.db.flush()
         await self._notify_reviewers(kb, doc)
         return doc
@@ -127,6 +160,10 @@ class ReviewService:
         doc.reviewer_id = reviewer_id
         doc.reviewed_at = datetime.now(timezone.utc)
         doc.review_comment = comment
+        # Plan 39 — chunks.review_excluded 跟随 review_status：
+        # approved → false（进入召回）；rejected → 保持 true（永不召回）
+        if new_status == REVIEW_APPROVED:
+            await self._set_chunks_excluded(doc_id, False)
         await self.db.flush()
         await self._notify_owner_decision(doc, new_status, comment)
         logger.info(
@@ -134,6 +171,19 @@ class ReviewService:
             doc_id=str(doc_id), status=new_status, reviewer=str(reviewer_id),
         )
         return doc
+
+    async def _set_chunks_excluded(
+        self, doc_id: uuid.UUID, excluded: bool,
+    ) -> None:
+        """Plan 39 — 同步 chunks.review_excluded。
+        Plan 40 M2 — 多态 unit FK 切读。
+        审核期内容隔离派生列：pending/rejected unit 的 chunks 置 true，
+        不参与召回 / 命中统计 / 治理动态分。"""
+        await self.db.execute(
+            update(Chunk)
+            .where(Chunk.unit_type == "document", Chunk.unit_id == doc_id)
+            .values(review_excluded=excluded)
+        )
 
     async def _get_doc(self, doc_id: uuid.UUID) -> Document:
         doc = await self.db.get(Document, doc_id)
@@ -144,27 +194,31 @@ class ReviewService:
     async def _candidate_reviewers(
         self, kb: KnowledgeBase, *, exclude: set[uuid.UUID] | None = None,
     ) -> list[uuid.UUID]:
-        """KB owner + 同部门 DEPT_ADMIN，去掉 exclude（一般是 created_by 自己）。"""
-        from app.department.models import DepartmentRole, UserDepartment
-
-        exclude = exclude or set()
-        candidates: set[uuid.UUID] = {kb.created_by}
-        dept_ids = (await self.db.execute(
-            select(UserDepartment.department_id).where(
-                UserDepartment.user_id == kb.created_by,
-            )
-        )).scalars().all()
-        if dept_ids:
-            admin_rows = (await self.db.execute(
-                select(UserDepartment.user_id).distinct().where(
-                    UserDepartment.department_id.in_(dept_ids),
-                    UserDepartment.role == DepartmentRole.DEPT_ADMIN,
-                )
-            )).scalars().all()
-            candidates.update(admin_rows)
-        return [uid for uid in candidates if uid not in exclude]
+        """Plan 39 M2 — 候选审核员 spec 实现。
+        delegate 到 reviewers.get_candidate_reviewers，
+        覆盖 DepartmentResource (shared) + system_admin + KB owner dept fallback。
+        """
+        from app.knowledge.review.reviewers import get_candidate_reviewers
+        return await get_candidate_reviewers(self.db, kb, exclude_user_ids=exclude)
 
     async def _notify_reviewers(self, kb: KnowledgeBase, doc: Document) -> None:
+        # Plan 39 M2 — 去重：同一 unit 在 pending 期间多次提交仅发一条
+        # review_pending；approved/rejected 后再次进入 pending 才重置（last_pending_started_at 推进）
+        if doc.last_pending_started_at:
+            existing = await self.db.execute(
+                select(Notification.id).where(
+                    Notification.type == "review_pending",
+                    Notification.resource_id == doc.id,
+                    Notification.created_at > doc.last_pending_started_at,
+                ).limit(1)
+            )
+            if existing.first() is not None:
+                logger.debug(
+                    "review_pending_notification_deduped",
+                    doc_id=str(doc.id),
+                    last_pending_started_at=doc.last_pending_started_at.isoformat(),
+                )
+                return
         targets = await self._candidate_reviewers(kb, exclude={doc.created_by})
         if not targets:
             # 单人 KB —— owner 就是上传者；至少给个自我提醒

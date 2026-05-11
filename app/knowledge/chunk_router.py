@@ -95,7 +95,9 @@ async def edit_chunk(
 
     chunk_svc = ChunkService(db)
     chunk = await chunk_svc.edit_chunk(chunk_id, body.content, current_user.id)
-    safe_delay(embed_document_chunks,str(chunk.document_id), str(kb_id))
+    # Plan 41 M3.2 — 用通用 embed_unit_chunks（多态 unit FK）
+    from app.knowledge.embedding.tasks import embed_unit_chunks
+    safe_delay(embed_unit_chunks, chunk.unit_type, str(chunk.unit_id), str(kb_id))
     return chunk
 
 

@@ -38,6 +38,17 @@ HIT_DROP_RATIO = 0.3   # "rolling_hit_7d < rolling_hit_prev_7d × 0.3"
 
 @shared_task(name="app.knowledge.lifecycle.tasks.document_lifecycle")
 def document_lifecycle() -> dict:
+    """Plan 32 M3 — 文件型 lifecycle。
+    Plan 40 M2 — deprecated alias，保持向后兼容（celery beat schedule 一个版本周期内）；
+    新代码用 ``unit_lifecycle``。"""
+    return asyncio.run(_run_lifecycle())
+
+
+@shared_task(name="app.knowledge.lifecycle.tasks.unit_lifecycle")
+def unit_lifecycle() -> dict:
+    """Plan 40 M2 — 通用 lifecycle 任务，按 KB.source_type 路由到对应 plugin。
+    当前文件型仍走 _run_lifecycle 现有路径；非 file 类型 (Plan 41 entry 等) 走
+    IngestionPlugin.mark_stale_units。"""
     return asyncio.run(_run_lifecycle())
 
 
@@ -60,6 +71,22 @@ async def _run_lifecycle(now: datetime | None = None) -> dict:
 
             for kb in kbs:
                 stats["kbs"] += 1
+                # Plan 40 M2 — 非 file 类型 KB 通过 plugin 接口处理 lifecycle
+                # （Plan 41 entry 等）。当前文件型仍走下方现有 documents 路径。
+                if kb.source_type != "file":
+                    try:
+                        from app.knowledge.sources import get_plugin
+                        plugin = get_plugin(kb.source_type)
+                        cfg2 = kb.governance_config or {}
+                        cutoff_p = now - timedelta(
+                            days=int(cfg2.get("expiration_threshold_days", DEFAULT_EXPIRATION_DAYS)),
+                        )
+                        marked = await plugin.mark_stale_units(db, kb.id, cutoff_p)
+                        stats["new_stale"] += marked
+                    except Exception:
+                        logger.debug("plugin_mark_stale_failed", kb_id=str(kb.id), exc_info=True)
+                    continue
+
                 cfg = kb.governance_config or {}
                 expiration_days = int(cfg.get("expiration_threshold_days", DEFAULT_EXPIRATION_DAYS))
                 idle_days = int(cfg.get("auto_archive_idle_days", DEFAULT_AUTO_ARCHIVE_IDLE_DAYS))
@@ -129,9 +156,10 @@ async def _compute_doc_hit_windows(
 
     t_7d = now - timedelta(days=7)
     t_14d = now - timedelta(days=14)
+    # Plan 40 M2 — 多态 unit FK 切读：仅文件型 KB 有 documents，按 unit_type 限定
     rows = (await db.execute(
         select(
-            Chunk.document_id,
+            Chunk.unit_id,
             func.sum(case((ChunkUsageEvent.created_at >= t_7d, 1), else_=0)).label("hits7"),
             func.sum(
                 case(
@@ -150,10 +178,12 @@ async def _compute_doc_hit_windows(
         .join(Chunk, Chunk.id == ChunkUsageEvent.chunk_id)
         .where(
             Chunk.knowledge_base_id == kb_id,
+            Chunk.unit_type == "document",
+            Chunk.review_excluded.is_(False),
             ChunkUsageEvent.event_type == "hit",
             ChunkUsageEvent.created_at >= t_14d,
         )
-        .group_by(Chunk.document_id)
+        .group_by(Chunk.unit_id)
     )).all()
     return {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in rows}
 

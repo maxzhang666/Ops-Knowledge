@@ -82,7 +82,11 @@ def availability_score(s: FacetStats) -> tuple[float, dict]:
 
 
 def answer_quality_score(s: FacetStats) -> tuple[float, dict]:
-    """Layer 4 — LLM-as-judge 7d 平均。无样本时返回 neutral 50（不因没数据扣分）。"""
+    """Layer 4 — LLM-as-judge 7d 平均。无样本时返回 neutral 50（不因没数据扣分）。
+    例外：完全空的 KB（无 chunks 且无 docs）返回 0，与其他 facet 一致 ——
+    避免"刚建空 KB 显示 10 分"的误导（5 facet × 50 × 0.2 = 10）。"""
+    if s.total_chunks == 0 and s.total_docs == 0:
+        return 0.0, {"samples": 0, "avg": None, "empty": True}
     if s.answer_quality_samples <= 0 or s.answer_quality_avg is None:
         return 50.0, {"samples": 0, "avg": None, "empty": True}
     score = max(0.0, min(1.0, s.answer_quality_avg)) * 100

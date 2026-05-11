@@ -30,7 +30,7 @@ from app.knowledge.coverage.redundancy import (
 
 logger = structlog.get_logger(__name__)
 
-SYNC_DB_URL = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+SYNC_DB_URL = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")  # psycopg v3
 MAX_CHUNKS_PER_KB = 5000
 MAX_PAIRS_PER_KB = 500
 
@@ -67,6 +67,8 @@ def redundancy_scan(kb_id: str | None = None) -> dict:
                     select(Chunk).where(
                         Chunk.knowledge_base_id == kb.id,
                         Chunk.vector_id.isnot(None),
+                        # Plan 39 — pending/rejected chunks 不进覆盖度分析
+                        Chunk.review_excluded.is_(False),
                     )
                 ).all()
                 if len(chunks) < 2:
@@ -187,6 +189,8 @@ async def _run_cross_kb_scan(sample_per_kb: int) -> dict:
                     .where(
                         Chunk.knowledge_base_id == kb.id,
                         Chunk.vector_id.isnot(None),
+                        # Plan 39
+                        Chunk.review_excluded.is_(False),
                     )
                     .limit(sample_per_kb)
                 )).scalars().all()]
@@ -290,6 +294,8 @@ async def _run_topic_scan(kb_id_filter: str | None) -> dict:
                     .where(
                         Chunk.knowledge_base_id == kb.id,
                         Chunk.vector_id.isnot(None),
+                        # Plan 39
+                        Chunk.review_excluded.is_(False),
                     )
                 )).all()
             if len(chunks) < 6:

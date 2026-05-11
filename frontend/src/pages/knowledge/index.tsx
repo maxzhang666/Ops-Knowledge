@@ -106,7 +106,7 @@ export default function KnowledgePage() {
           action={{ label: "创建知识库", onClick: () => setCreateOpen(true) }}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
           {kbs.map((kb) => (
             <KBCard key={kb.id} kb={kb} onDelete={setDeleteTarget} />
           ))}

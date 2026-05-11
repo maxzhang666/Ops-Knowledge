@@ -31,6 +31,12 @@ from app.model.schemas import (
 logger = structlog.get_logger(__name__)
 
 
+class AgentModelNotConfigured(ValueError):
+    """Raised when an Agent has neither a registry-bound model nor the legacy
+    provider+model_name pair. Permanent error — callers should not retry.
+    """
+
+
 class ModelService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -113,19 +119,24 @@ class ModelService:
         trace_id: str | None = None,
         user_id: uuid.UUID | None = None,
     ) -> None:
+        # Wrap insert in a SAVEPOINT so a failed flush (FK violation, mapper
+        # resolution error, transient DB hiccup, etc.) rolls back ONLY the
+        # cost row — the outer transaction stays alive. Without this, a
+        # silent except-swallow leaves the AsyncSession in DEACTIVE state
+        # and every subsequent op raises PendingRollbackError.
         try:
-            record = CostRecord(
-                provider_id=provider_id,
-                model_name=model_name,
-                call_type=call_type,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cost=cost,
-                trace_id=trace_id,
-                user_id=user_id,
-            )
-            self.db.add(record)
-            await self.db.flush()
+            async with self.db.begin_nested():
+                record = CostRecord(
+                    provider_id=provider_id,
+                    model_name=model_name,
+                    call_type=call_type,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost=cost,
+                    trace_id=trace_id,
+                    user_id=user_id,
+                )
+                self.db.add(record)
         except Exception:
             logger.warning("cost_record_failed", model=model_name, call_type=call_type)
 
@@ -563,6 +574,27 @@ class ModelService:
             user_id=user_id,
         )
         return response
+
+    async def chat_by_agent(
+        self, agent, messages: list[dict], **kwargs,
+    ) -> dict:
+        """Dispatch a non-streaming chat call based on Agent's model config.
+
+        Prefers the registry binding (``agent.model_id``); falls back to the
+        legacy ``(model_provider_id, model_name)`` pair for agents predating
+        the ModelRegistry migration. Raises ``AgentModelNotConfigured`` when
+        neither is set — caller MUST treat as permanent (do not retry).
+        """
+        if getattr(agent, "model_id", None):
+            return await self.chat_by_registry(agent.model_id, messages, **kwargs)
+        if agent.model_provider_id and agent.model_name:
+            return await self.chat(
+                agent.model_provider_id, agent.model_name, messages, **kwargs,
+            )
+        raise AgentModelNotConfigured(
+            f"agent {agent.id} has no model configured "
+            "(model_id / model_provider_id+model_name all empty)"
+        )
 
     async def chat_stream_by_registry(
         self, registry_id: uuid.UUID, messages: list[dict], **kwargs,

@@ -23,6 +23,11 @@ class KBService:
     async def create_kb(self, data: KBCreate, user_id: uuid.UUID) -> KnowledgeBase:
         await self.check_kb_quota(user_id)
 
+        # Plan 41 — 校验 source_type 已注册
+        from app.knowledge.sources import is_supported as _src_supported
+        if not _src_supported(data.source_type):
+            raise ValueError(f"unsupported source_type: {data.source_type}")
+
         provider_id = data.embedding_provider_id
         model_name = data.embedding_model_name
         registry_id = data.embedding_model_id
@@ -51,6 +56,7 @@ class KBService:
         kb = KnowledgeBase(
             name=data.name,
             description=data.description,
+            source_type=data.source_type,
             embedding_provider_id=provider_id,
             embedding_model_name=model_name,
             embedding_model_id=registry_id,

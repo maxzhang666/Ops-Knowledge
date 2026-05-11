@@ -7,8 +7,30 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
-function Sheet({ ...props }: SheetPrimitive.Root.Props) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+// 项目级规则（feedback_dialog_no_outside_close）：Sheet 同 Dialog 禁用空白/ESC 关闭
+const SHEET_DISMISSAL_BLOCKED = new Set([
+  "outside-press",
+  "escape-key",
+  "focus-out",
+])
+
+function Sheet({ onOpenChange, ...props }: SheetPrimitive.Root.Props) {
+  const wrappedOnOpenChange: SheetPrimitive.Root.Props["onOpenChange"] = (
+    open, eventDetails,
+  ) => {
+    if (!open && eventDetails && SHEET_DISMISSAL_BLOCKED.has(eventDetails.reason)) {
+      return
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+  return (
+    <SheetPrimitive.Root
+      data-slot="sheet"
+      disablePointerDismissal
+      onOpenChange={wrappedOnOpenChange}
+      {...props}
+    />
+  )
 }
 
 function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {

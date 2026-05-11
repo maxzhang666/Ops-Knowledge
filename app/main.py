@@ -5,6 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+# Eager-instantiate the Celery app so its broker (REDIS_URL) becomes the
+# "current app" used by ``@shared_task`` dispatches from API handlers.
+# Without this, ``task.delay()`` from a request thread falls back to
+# Celery's global default broker (``pyamqp://guest@localhost:5672//``),
+# silently fails to publish, and the document stays stuck in "pending"
+# forever because the worker never sees the message.
+import app.core.celery  # noqa: F401
+
 from app.agent.orchestrator.router import router as orchestrator_router
 from app.agent.router import router as agent_router
 from app.auth.router import router as auth_router
@@ -23,6 +31,12 @@ from app.knowledge.folder_router import router as folder_router
 from app.knowledge.coverage.router import router as kb_coverage_router
 from app.knowledge.evaluation.router import router as evaluation_router
 from app.knowledge.review.router import router as kb_review_router
+from app.knowledge.unit_router import router as kb_unit_router
+from app.knowledge.entry_router import router as kb_entry_router
+from app.knowledge.sources_router import router as kb_sources_router
+# Plan 40 M1 — 触发 IngestionPlugin 注册（FileSourcePlugin 等）。
+# 必须在 router 导入之后、app.include_router 调用之前完成。
+import app.knowledge.sources  # noqa: F401
 from app.knowledge.governance.router import router as kb_governance_router
 from app.knowledge.ingestion_router import router as ingestion_router
 from app.knowledge.retrieval_router import router as retrieval_router
@@ -30,6 +44,7 @@ from app.knowledge.router import router as kb_router
 from app.mcp.router import router as mcp_router
 from app.model.router import router as model_router
 from app.system.init_router import router as init_router
+from app.system.milvus_router import router as system_milvus_router
 from app.system.notification_router import router as notification_router
 from app.system.router import router as system_router
 from app.system.user_router import router as user_router
@@ -193,6 +208,7 @@ app.include_router(department_router, prefix=settings.API_V1_PREFIX)
 app.include_router(model_router, prefix=settings.API_V1_PREFIX)
 app.include_router(mcp_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_router, prefix=settings.API_V1_PREFIX)
+app.include_router(system_milvus_router, prefix=settings.API_V1_PREFIX)
 app.include_router(init_router, prefix=settings.API_V1_PREFIX)
 app.include_router(notification_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
@@ -205,6 +221,9 @@ app.include_router(kb_governance_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_coverage_router, prefix=settings.API_V1_PREFIX)
 app.include_router(evaluation_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_review_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_unit_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_entry_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_sources_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ingestion_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agent_router, prefix=settings.API_V1_PREFIX)

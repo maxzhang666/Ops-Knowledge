@@ -2,6 +2,11 @@ from celery import Celery
 from celery.signals import worker_ready
 
 from app.core.config import settings
+# Eager-load every ORM class so the worker's SQLAlchemy mapper registry is
+# complete. Without this, cross-model FKs (e.g. cost_records.user_id) fail
+# at flush time with "could not find table 'users'", since autodiscover
+# only loads task modules, not their FK targets.
+import app.core.orm_registry  # noqa: F401
 
 celery_app = Celery("ops_knowledge", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 

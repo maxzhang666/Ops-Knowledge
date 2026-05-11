@@ -8,6 +8,7 @@ import structlog
 
 from app.core.cache import CacheService
 from app.core.database import async_session
+from app.knowledge.milvus.service import kb_collection_name
 from app.knowledge.retrieval.query_rewriter import rewrite_query_v2
 from app.knowledge.retrieval.reranker import rerank_results
 from app.knowledge.retrieval.searcher import HybridSearcher, SearchResult
@@ -46,6 +47,15 @@ class RetrievalService:
         reranker_provider_id: uuid.UUID | None = None,
         reranker_model_name: str | None = None,
         embedding_model_registry_id: uuid.UUID | None = None,
+        # Workbench M1.3 — exposed retrieval knobs + auth context for log replay
+        bm25_weight: float = 1.0,
+        vector_weight: float = 1.0,
+        score_threshold: float | None = None,
+        created_by: uuid.UUID | None = None,
+        # M6.5 — 测试标志：True 时跳过治理事件（hit_count / record_hits_bulk /
+        # record_no_result），retrieval_logs 仍写入但带 is_test=True，让 Workbench
+        # 历史侧栏可见，治理统计可过滤
+        is_test: bool = False,
     ) -> RetrievalResult:
         t0 = time.monotonic()
         query_used = query
@@ -106,10 +116,12 @@ class RetrievalService:
         query_vector = vectors[0]
 
         # 3. Multi-KB search
-        kb_configs = [{"collection_name": f"kb_{kb_id}", "kb_id": kb_id} for kb_id in kb_ids]
+        kb_configs = [{"collection_name": kb_collection_name(kb_id), "kb_id": kb_id} for kb_id in kb_ids]
         try:
             results = await self._searcher.multi_kb_search(
-                kb_configs, query_vector, query_used, top_k=top_k, folder_ids=folder_ids,
+                kb_configs, query_vector, query_used,
+                top_k=top_k, folder_ids=folder_ids,
+                bm25_weight=bm25_weight, vector_weight=vector_weight,
             )
         finally:
             try:
@@ -134,11 +146,24 @@ class RetrievalService:
                 query_used, results, reranker_provider_id, reranker_model_name, top_n=top_k,
             )
 
+        # 4.5 Optional 最低向量相关度 filter — 阈值作用于 `dense_score`（cosine 0-1，
+        # 跨 query/KB 一致），而不是融合分（RRF 量级 ~1/K，不是相关度）。仅命中
+        # BM25 的 chunk（dense_score is None）放行，词面命中保留为另一类弱信号。
+        if score_threshold is not None and results:
+            results = [
+                r for r in results
+                if r.dense_score is None or r.dense_score >= score_threshold
+            ]
+
         # 5. Increment hit_count + emit governance events (Plan 32 M1.3).
         #    Uses a short dedicated session so retrieval path doesn't couple to caller's tx.
         #    hit_count is a rollup counter (kept for fast queries); the canonical
         #    record is in chunk_usage_events (event_type=hit) for time-window aggregation.
-        if results:
+        # M6.5 — is_test=True 跳过：测试性 query 不算"真实使用"，否则会污染
+        # 覆盖度 / 可用性 / 知识盲区告警等治理画像。
+        if is_test:
+            pass
+        elif results:
             try:
                 from sqlalchemy import update
                 from app.knowledge.governance.events import record_hits_bulk
@@ -182,11 +207,50 @@ class RetrievalService:
             result_count=len(results),
             timing_ms=elapsed,
         )
-        # Plan 35 — 记录每次检索（按 query_type）做 auto-tuning 数据底座
+        # Plan 35 — 记录每次检索（按 query_type）做 auto-tuning 数据底座。
+        # Workbench M1.3 — params_json / latency_ms / created_by 让 UI 能
+        # 完整重放并按用户筛选。
         try:
             from app.knowledge.retrieval.query_classifier import classify
             from app.knowledge.retrieval.models import RetrievalLog
             qtype = classify(query_used).type
+            params_snapshot = {
+                "top_k": top_k,
+                "folder_ids": folder_ids or [],
+                "rewrite": rewrite,
+                "bm25_weight": bm25_weight,
+                "vector_weight": vector_weight,
+                "score_threshold": score_threshold,
+                "rerank_enabled": bool(reranker_provider_id and reranker_model_name),
+                "reranker_model": reranker_model_name,
+                "embedding_registry_id": (
+                    str(embedding_model_registry_id) if embedding_model_registry_id else None
+                ),
+                "embedding_provider_id": (
+                    str(embedding_provider_id) if embedding_provider_id else None
+                ),
+                "embedding_model_name": embedding_model_name,
+            }
+            # Workbench M2.1 — snapshot hit list. Trim content to 500 chars
+            # so JSONB stays compact even with top_k=20+. Keeping per-stage
+            # scores so history replay shows the same breakdown bar.
+            results_snapshot = [
+                {
+                    "chunk_id": r.chunk_id,
+                    "content": (r.content or "")[:500],
+                    "score": r.score,
+                    "dense_score": r.dense_score,
+                    "bm25_score": r.bm25_score,
+                    "rerank_score": r.rerank_score,
+                    "document_id": r.document_id,
+                    "folder_id": r.folder_id,
+                    "level": r.level,
+                    "title": r.title,
+                    "metadata": r.metadata or {},
+                    "source_kb_id": r.source_kb_id,
+                }
+                for r in results
+            ]
             async with async_session() as log_db:
                 for kid in kb_ids:
                     log_db.add(RetrievalLog(
@@ -195,6 +259,11 @@ class RetrievalService:
                         query_type=qtype,
                         top_k=top_k,
                         result_count=len(results),
+                        params_json=params_snapshot,
+                        latency_ms=elapsed,
+                        created_by=created_by,
+                        results_json=results_snapshot,
+                        is_test=is_test,
                     ))
                 await log_db.commit()
         except Exception:
@@ -284,44 +353,63 @@ class RetrievalService:
         )
 
     async def _filter_invisible(self, results: list[SearchResult]) -> list[SearchResult]:
-        """聚合不可见过滤：归档文档（Plan 32 M3）+ KB.review_required=True
-        但 Document.review_status != approved（Plan 29）。失败时保守通过，
-        不让治理故障阻断检索。"""
+        """聚合不可见过滤：
+        - 归档文档（Plan 32 M3）：仍走 documents.is_archived 检查
+        - 审核期内容隔离（Plan 39）：走 chunks.review_excluded 派生列，
+          替代原 JOIN documents.review_status 实现，性能更好且统一接入
+          多 source_type（条目型 KB 同样用 chunks.review_excluded）
+
+        失败时保守通过，不让治理故障阻断检索。"""
+        chunk_ids: set[uuid.UUID] = set()
         doc_ids: set[uuid.UUID] = set()
         for r in results:
+            if r.chunk_id:
+                try:
+                    chunk_ids.add(uuid.UUID(r.chunk_id))
+                except Exception:
+                    pass
             if r.document_id:
                 try:
                     doc_ids.add(uuid.UUID(r.document_id))
                 except Exception:
-                    continue
-        if not doc_ids:
+                    pass
+        if not chunk_ids and not doc_ids:
             return results
         try:
             from sqlalchemy import select as _select
-            from app.knowledge.models import Document, KnowledgeBase
+            from app.knowledge.models import Chunk, Document
+            invisible_chunks: set[str] = set()
+            invisible_docs: set[str] = set()
             async with async_session() as db:
-                rows = (await db.execute(
-                    _select(
-                        Document.id,
-                        Document.is_archived,
-                        Document.review_status,
-                        KnowledgeBase.review_required,
-                    )
-                    .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
-                    .where(Document.id.in_(doc_ids))
-                )).all()
-            invisible: set[str] = set()
-            for did, archived, review_status, review_required in rows:
-                if archived:
-                    invisible.add(str(did))
-                    continue
-                if review_required and review_status != "approved":
-                    invisible.add(str(did))
-            if invisible:
-                filtered = [r for r in results if r.document_id not in invisible]
+                # 1. Plan 39 — chunks.review_excluded 派生列（pending / rejected）
+                if chunk_ids:
+                    excluded_rows = (await db.execute(
+                        _select(Chunk.id).where(
+                            Chunk.id.in_(chunk_ids),
+                            Chunk.review_excluded.is_(True),
+                        )
+                    )).scalars().all()
+                    invisible_chunks = {str(cid) for cid in excluded_rows}
+                # 2. Plan 32 M3 — documents.is_archived
+                if doc_ids:
+                    archived_rows = (await db.execute(
+                        _select(Document.id).where(
+                            Document.id.in_(doc_ids),
+                            Document.is_archived.is_(True),
+                        )
+                    )).scalars().all()
+                    invisible_docs = {str(did) for did in archived_rows}
+            if invisible_chunks or invisible_docs:
+                filtered = [
+                    r for r in results
+                    if r.chunk_id not in invisible_chunks
+                    and r.document_id not in invisible_docs
+                ]
                 logger.debug(
                     "retrieval_invisible_filtered",
                     dropped=len(results) - len(filtered),
+                    by_review=len(invisible_chunks),
+                    by_archive=len(invisible_docs),
                 )
                 return filtered
             return results

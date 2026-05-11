@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom"
 import {
-  Activity, Building2, Coins, Cpu, Key, Layers, Plug, Settings, ShieldCheck, UserCircle, Users,
+  Activity, Building2, Coins, Cpu, Database, Key, Layers, Plug, Settings, ShieldCheck, UserCircle, Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuthStore } from "@/stores/auth"
@@ -14,6 +14,7 @@ const allNavItems = [
   { to: "/settings/observability", icon: Activity, label: "可观测性", adminOnly: true },
   { to: "/settings/costs", icon: Coins, label: "成本", adminOnly: true },
   { to: "/settings/cross-kb", icon: Layers, label: "跨库治理", adminOnly: true },
+  { to: "/settings/milvus", icon: Database, label: "Milvus 治理", adminOnly: true },
   { to: "/settings/system", icon: Settings, label: "系统管理", adminOnly: true },
   { to: "/settings/profile", icon: UserCircle, label: "个人设置", adminOnly: false },
   { to: "/settings/api-keys", icon: Key, label: "API 密钥", adminOnly: false },

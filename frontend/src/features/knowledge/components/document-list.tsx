@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { FileText, Clock, CheckCircle2, XCircle, Trash2, RefreshCcw, X, FolderInput } from "lucide-react"
 import { toast } from "sonner"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -43,15 +42,29 @@ function StatusIcon({ status }: { status: DocumentStatus }) {
   }
 }
 
-const typeColors: Record<string, string> = {
-  pdf: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-  word: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-  txt: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  markdown: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
-  html: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
-  csv: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-  api_ingestion: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300",
-  qa_pair: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
+// File icon tints by source type — replaces the right-side type badge so
+// the title row gets back the ~80px of horizontal space the badge ate.
+const typeIconColors: Record<string, string> = {
+  pdf: "text-red-500",
+  word: "text-blue-500",
+  txt: "text-gray-500",
+  markdown: "text-purple-500",
+  html: "text-orange-500",
+  csv: "text-green-500",
+  api_ingestion: "text-cyan-500",
+  qa_pair: "text-indigo-500",
+}
+
+// Short uppercase labels shown inline in the meta row.
+const typeLabels: Record<string, string> = {
+  pdf: "PDF",
+  word: "WORD",
+  txt: "TXT",
+  markdown: "MD",
+  html: "HTML",
+  csv: "CSV",
+  api_ingestion: "API",
+  qa_pair: "QA",
 }
 
 interface DocumentListProps {
@@ -212,6 +225,7 @@ export function DocumentList({ kbId, refreshToken, onDocumentsChanged }: Documen
             return (
               <div
                 key={doc.id}
+                title={doc.title}
                 className={cn(
                   "group flex items-center gap-2 rounded-md border px-2.5 py-2 cursor-pointer transition-colors hover:bg-muted",
                   selectedDocId === doc.id && "border-primary bg-muted",
@@ -228,25 +242,26 @@ export function DocumentList({ kbId, refreshToken, onDocumentsChanged }: Documen
                     !selectMode && "opacity-0 group-hover:opacity-100 data-[state=checked]:opacity-100",
                   )}
                 />
-                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                <FileText
+                  className={cn(
+                    "size-4 shrink-0",
+                    typeIconColors[doc.source_type] ?? "text-muted-foreground",
+                  )}
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <StatusIcon status={doc.status} />
                     <p className="truncate text-sm font-medium">{doc.title}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="truncate text-xs text-muted-foreground">
+                    <span className="font-medium">{typeLabels[doc.source_type] ?? doc.source_type}</span>
+                    <span className="mx-1.5">·</span>
                     {doc.chunk_count} 分块
                     <span className="mx-1.5">·</span>
                     <TimeDisplay value={doc.created_at} />
                   </p>
                 </div>
-                <Badge
-                  variant="outline"
-                  className={cn("shrink-0 border-transparent uppercase", typeColors[doc.source_type])}
-                >
-                  {doc.source_type}
-                </Badge>
-                <DocumentStatusBadge status={doc.status} />
+                <DocumentStatusBadge status={doc.status} className="shrink-0" />
               </div>
             )
           })}

@@ -3,7 +3,7 @@ import uuid
 import structlog
 import tiktoken
 from celery import shared_task
-from sqlalchemy import create_engine, delete, select, update
+from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.orm import Session
 
 try:
@@ -20,14 +20,14 @@ def _count_tokens(text: str) -> int:
 from app.core.config import settings
 from app.core.runtime_config import get_sync_runtime_config
 from app.knowledge.chunking.presets import get_strategy_for_preset
-from app.knowledge.embedding.tasks import embed_document_chunks
+from app.knowledge.embedding.tasks import embed_document_chunks, embed_unit_chunks  # noqa: F401
 from app.knowledge.ingestion.parser import parse_document
 from app.knowledge.models import Chunk, Document, DocumentStatus, Folder, KnowledgeBase
 from app.knowledge.storage.minio_service import MinIOService
 
 logger = structlog.get_logger(__name__)
 
-SYNC_DB_URL = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+SYNC_DB_URL = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")  # psycopg v3
 
 
 def _get_sync_engine():
@@ -69,13 +69,39 @@ def _submit_doc_for_review(session, doc_id: str, kb) -> None:
     from app.department.models import DepartmentRole, UserDepartment
     from app.system.models import Notification
 
+    from datetime import datetime, timezone
+    from app.knowledge.models import Chunk
+
     doc = session.get(Document, doc_id)
     if doc is None or doc.review_status is not None:
         return
+    now = datetime.now(timezone.utc)
     doc.review_status = "pending"
     doc.reviewer_id = None
     doc.reviewed_at = None
     doc.review_comment = None
+    doc.last_pending_started_at = now  # Plan 39 M2 — 通知去重锚点
+    # Plan 39 — 同步设置 chunks.review_excluded=true，pending 内容不进召回
+    # Plan 40 M2 — 多态 unit FK 切读
+    session.execute(
+        update(Chunk).where(
+            Chunk.unit_type == "document", Chunk.unit_id == doc.id,
+        ).values(review_excluded=True)
+    )
+
+    # Plan 39 M2 — 去重：同一 unit pending 期间已发过通知则跳过
+    from app.system.models import Notification as _Notif
+    existing_notif = session.execute(
+        select(_Notif.id).where(
+            _Notif.type == "review_pending",
+            _Notif.resource_id == doc.id,
+            _Notif.created_at > now,  # 实践上不会有；保留对称结构
+        ).limit(1)
+    ).first()
+    # 注：sync 路径首次设置 last_pending_started_at，理论上不会有重复通知；
+    # 但显式保留检查，跟 ReviewService.submit_for_review 行为对齐
+    if existing_notif:
+        return
 
     candidates: set = {kb.created_by}
     dept_ids = session.execute(
@@ -176,9 +202,14 @@ def process_document(self, doc_id: str) -> dict:
         logger.info("document_already_processing", doc_id=doc_id)
         return {"status": "skipped", "message": "Already processing"}
 
-    runtime_cfg = get_sync_runtime_config()
-    engine = _get_sync_engine()
+    # Move every potentially-failing call INSIDE the try so the finally
+    # always runs and releases the lock + disposes the engine. Previously
+    # an exception in get_sync_runtime_config/_get_sync_engine left the
+    # lock alive for its full TTL (30 min), making retries silently skip.
+    engine = None
     try:
+        runtime_cfg = get_sync_runtime_config()
+        engine = _get_sync_engine()
         with Session(engine) as session:
             doc = session.get(Document, doc_id)
             if doc is None:
@@ -192,6 +223,50 @@ def process_document(self, doc_id: str) -> dict:
                 update(Document).where(Document.id == doc_id).values(status=DocumentStatus.PROCESSING)
             )
             session.commit()
+
+            # Reprocess cleanup — wipe previous chunks + their vectors before
+            # we generate fresh ones. Otherwise repeated "重新处理" only
+            # appends rows: documents.chunk_count is the latest batch's size,
+            # but chunks table accumulates indefinitely (and so does
+            # KB.chunk_count, since we += later but never -= the stale rows).
+            # Plan 40 M2 — 多态 unit FK 切读
+            old_chunk_count = session.execute(
+                select(func.count()).select_from(Chunk).where(
+                    Chunk.unit_type == "document", Chunk.unit_id == doc_id,
+                )
+            ).scalar() or 0
+            if old_chunk_count > 0:
+                session.execute(delete(Chunk).where(
+                    Chunk.unit_type == "document", Chunk.unit_id == doc_id,
+                ))
+                session.execute(
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id == kb_id)
+                    .values(chunk_count=KnowledgeBase.chunk_count - old_chunk_count)
+                )
+                session.commit()
+                # Milvus is best-effort — its loss only means stale vectors
+                # linger; the upsert path in embed_document_chunks will
+                # overwrite by chunk-id PK, so retrieval still serves the
+                # latest set. Don't fail processing if Milvus is unreachable.
+                try:
+                    from app.knowledge.milvus.service import MilvusService, kb_collection_name
+                    milvus = MilvusService(runtime_cfg=runtime_cfg)
+                    try:
+                        collection = kb_collection_name(kb_id)
+                        if milvus.collection_exists(collection):
+                            milvus.delete_by_filter(collection, f'document_id == "{doc_id}"')
+                    finally:
+                        milvus.close()
+                    logger.info(
+                        "reprocess_old_chunks_cleared",
+                        doc_id=doc_id, count=old_chunk_count,
+                    )
+                except Exception:
+                    logger.warning(
+                        "reprocess_milvus_cleanup_failed",
+                        doc_id=doc_id, exc_info=True,
+                    )
 
             try:
                 # API-ingested documents (spec 22.3) carry content inline in
@@ -278,23 +353,30 @@ def process_document(self, doc_id: str) -> dict:
                 _update_progress(session, doc_id, "indexing", 0, len(chunk_results))
                 from app.knowledge.quality.scorer import score_chunk
 
-                # Build parent_chunk_id mapping: composite temporary IDs → real UUIDs
-                parent_id_map: dict[str, uuid.UUID] = {}
+                # Map ChunkResult.id (logical, set only by hierarchical
+                # strategies like CompositeStrategy) → real DB uuid. Both
+                # parents (whose own row carries cr.id) and children
+                # (cr.parent_chunk_id references the same logical id) go
+                # through this map so child.parent_chunk_id resolves to the
+                # parent's actual primary key.
+                id_map: dict[str, uuid.UUID] = {}
+
+                def _real_id(logical_id: str | None) -> uuid.UUID:
+                    if logical_id is None:
+                        return uuid.uuid4()
+                    if logical_id not in id_map:
+                        id_map[logical_id] = uuid.uuid4()
+                    return id_map[logical_id]
+
                 chunk_objects = []
-                for i, cr in enumerate(chunk_results):
+                for cr in chunk_results:
                     quality = score_chunk(cr.content)
-                    chunk_id = uuid.uuid4()
-
-                    real_parent_id = None
-                    if cr.parent_chunk_id:
-                        if cr.parent_chunk_id not in parent_id_map:
-                            parent_id_map[cr.parent_chunk_id] = uuid.uuid4()
-                        real_parent_id = parent_id_map[cr.parent_chunk_id]
-
                     token_est = _count_tokens(cr.content)
                     chunk_objects.append(Chunk(
-                        id=chunk_id,
-                        document_id=doc.id,
+                        id=_real_id(cr.id),
+                        # Plan 40 M3 — document_id 已 drop，仅用 unit_type/unit_id
+                        unit_type="document",
+                        unit_id=doc.id,
                         knowledge_base_id=doc.knowledge_base_id,
                         folder_id=doc.folder_id,
                         content=cr.content,
@@ -303,9 +385,20 @@ def process_document(self, doc_id: str) -> dict:
                         token_count=token_est,
                         quality_score=quality,
                         metadata_=cr.metadata or None,
-                        parent_chunk_id=real_parent_id,
+                        parent_chunk_id=_real_id(cr.parent_chunk_id) if cr.parent_chunk_id else None,
                     ))
-                session.add_all(chunk_objects)
+
+                # Insert parents before children so the self-referencing FK
+                # holds even if SQLAlchemy splits the batch across multiple
+                # statements. `parent_chunk_id is None` ⇒ root → goes first.
+                chunk_objects.sort(key=lambda c: (c.parent_chunk_id is not None, c.position))
+
+                with session.no_autoflush:
+                    session.add_all(chunk_objects)
+                    # Force the INSERT now while we still control ordering;
+                    # avoids "Query-invoked autoflush" interleaving an
+                    # incomplete batch with later SELECTs in this txn.
+                    session.flush()
 
                 from datetime import datetime, timezone
                 session.execute(
@@ -339,7 +432,8 @@ def process_document(self, doc_id: str) -> dict:
 
                 # Dispatch embedding task
                 if kb and (kb.embedding_model_id or (kb.embedding_provider_id and kb.embedding_model_name)):
-                    embed_document_chunks.delay(doc_id, kb_id)
+                    # Plan 41 M3.2 — 用通用 embed_unit_chunks
+                    embed_unit_chunks.delay("document", doc_id, kb_id)
 
                 # E7: Invalidate L2 retrieval cache for this KB
                 try:
@@ -355,6 +449,10 @@ def process_document(self, doc_id: str) -> dict:
                 return {"status": "completed", "doc_id": doc_id, "chunk_count": len(chunk_objects)}
 
             except Exception as exc:
+                # Always log the full traceback before retry — without this,
+                # Celery's retry-line-only summary loses the stack and we
+                # cannot diagnose why processing failed.
+                logger.exception("process_document_failed", doc_id=doc_id)
                 session.rollback()
                 err_str = str(exc)
                 if "password" in err_str.lower() or "encrypted" in err_str.lower():
@@ -380,7 +478,8 @@ def process_document(self, doc_id: str) -> dict:
 
     finally:
         _release_lock(doc_id)
-        engine.dispose()
+        if engine is not None:
+            engine.dispose()
 
 
 @shared_task(
@@ -397,9 +496,9 @@ def cascade_delete_kb(self, kb_id: str) -> dict:
     engine = _get_sync_engine()
     try:
         # 1. Drop Milvus collection
-        from app.knowledge.milvus.service import MilvusService
+        from app.knowledge.milvus.service import MilvusService, kb_collection_name
         milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
-        collection_name = f"kb_{kb_id}"
+        collection_name = kb_collection_name(kb_id)
         try:
             milvus_svc.drop_collection(collection_name)
             logger.info("milvus_collection_dropped", collection=collection_name)

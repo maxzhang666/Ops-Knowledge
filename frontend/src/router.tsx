@@ -7,6 +7,7 @@ import NotFoundPage from "@/pages/not-found"
 import InitWizard from "@/pages/init"
 import KnowledgePage from "@/pages/knowledge"
 import KBDetailPage from "@/pages/knowledge/detail"
+import ReviewCenterPage from "@/pages/review"
 import AgentsPage from "@/pages/agents"
 import AgentDetailPage from "@/pages/agents/detail"
 import WorkflowEditorPage from "@/pages/workflow/editor"
@@ -22,6 +23,7 @@ import SsoSettingsPage from "@/pages/settings/sso"
 import ObservabilityPage from "@/pages/settings/observability"
 import CostsPage from "@/pages/settings/costs"
 import CrossKBPage from "@/pages/settings/cross-kb"
+import MilvusGovernancePage from "@/pages/settings/milvus"
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -36,6 +38,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/knowledge" replace /> },
           { path: "knowledge", element: <KnowledgePage /> },
           { path: "knowledge/:id", element: <KBDetailPage /> },
+          { path: "review", element: <ReviewCenterPage /> },
           { path: "agents", element: <AgentsPage /> },
           { path: "agents/:id", element: <AgentDetailPage /> },
           // /workflow/:id stays as a directly-navigable editor URL (useful for
@@ -55,6 +58,7 @@ export const router = createBrowserRouter([
               { path: "observability", element: <ObservabilityPage /> },
               { path: "costs", element: <CostsPage /> },
               { path: "cross-kb", element: <CrossKBPage /> },
+              { path: "milvus", element: <MilvusGovernancePage /> },
               { path: "system", element: <SystemPage /> },
               { path: "profile", element: <ProfilePage /> },
               { path: "api-keys", element: <ApiKeysPage /> },

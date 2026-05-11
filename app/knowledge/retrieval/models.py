@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,20 @@ class RetrievalLog(Base, UUIDMixin):
     query_type: Mapped[str] = mapped_column(String(32), nullable=False)
     top_k: Mapped[int] = mapped_column(Integer, nullable=False)
     result_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Workbench fields (M1.1). NULL on legacy rows written before alembic 0044.
+    params_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    # Workbench M2.1 — snapshot of the hit list at retrieval time. Lets the
+    # history sidebar replay a past run without re-running the pipeline,
+    # surviving even if chunks have since been reprocessed/deleted.
+    results_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # M6.5 — 测试标志：True 表示来自 Workbench / Quick QA / 评估批跑等
+    # 测试性场景。治理统计 / Plan 35 推荐查询应过滤 is_test=False，避免
+    # 调参实验污染真实使用画像。
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

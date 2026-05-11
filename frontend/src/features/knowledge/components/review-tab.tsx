@@ -1,31 +1,33 @@
 import { useCallback, useEffect, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { toast } from "sonner"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { TimeDisplay } from "@/components/shared/time-display"
-import { knowledgeApi, type KnowledgeBase } from "@/api/knowledge"
+import { ReviewList } from "@/features/review/components/review-list"
+import { ReviewDetailSheet } from "@/features/review/components/review-detail-sheet"
+import { RejectDialog } from "@/features/review/components/reject-dialog"
+import { reviewApi, type ReviewItemView } from "@/api/review"
+import type { KnowledgeBase } from "@/api/knowledge"
 
-/** Plan 29 M5 — KB 详情「审批」tab，列出待审批文档；点击跳到 documents tab。 */
+/** Plan 39 M4.1 — KB 详情「审批」tab。
+ * 复用全局审核中心的 ReviewList / DetailSheet / RejectDialog 组件，
+ * 仅按 kb_id 过滤；UX 与 /review 全局工作台一致。 */
 export function ReviewTab({
-  kb, onPick,
+  kb,
+  onPick,
 }: {
   kb: KnowledgeBase
+  /** 选中条目时同步 documents tab 的选中状态（让用户看完 Sheet 后切回 documents 直接对位） */
   onPick: (docId: string) => void
 }) {
-  const [items, setItems] = useState<Array<{
-    document_id: string
-    title: string
-    created_by: string
-    created_at: string
-    chunk_count: number
-  }>>([])
+  const [items, setItems] = useState<ReviewItemView[]>([])
   const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<ReviewItemView | null>(null)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [rejectTarget, setRejectTarget] = useState<ReviewItemView | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await knowledgeApi.reviewQueue(kb.id)
+      const r = await reviewApi.listPending({ kb_id: kb.id, page_size: 50 })
       setItems(r.items)
     } finally {
       setLoading(false)
@@ -34,62 +36,78 @@ export function ReviewTab({
 
   useEffect(() => { load() }, [load])
 
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" /> 加载中…
-      </div>
-    )
+  async function handleApprove(item: ReviewItemView) {
+    try {
+      await reviewApi.approve(item.unit_type, item.unit_id)
+      toast.success(`已通过：${item.title}`)
+      setSheetOpen(false)
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "审核失败")
+    }
   }
 
-  if (items.length === 0) {
-    return (
-      <Card size="sm">
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          没有待审批文档
-        </CardContent>
-      </Card>
-    )
+  async function handleReject(comment: string) {
+    if (!rejectTarget) return
+    try {
+      await reviewApi.reject(rejectTarget.unit_type, rejectTarget.unit_id, comment)
+      toast.success(`已驳回：${rejectTarget.title}`)
+      setSheetOpen(false)
+      setRejectTarget(null)
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "驳回失败")
+    }
+  }
+
+  async function handleComment(item: ReviewItemView) {
+    const text = window.prompt("输入评论建议：")
+    if (!text || !text.trim()) return
+    try {
+      await reviewApi.comment(item.unit_type, item.unit_id, text.trim())
+      toast.success("评论已发送给作者")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "评论失败")
+    }
   }
 
   return (
-    <Card size="sm">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">待审批 ({items.length})</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-2">文档</th>
-                <th className="px-3 py-2 text-right">分块数</th>
-                <th className="px-3 py-2 text-right">提交时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((row) => (
-                <tr
-                  key={row.document_id}
-                  className="border-b last:border-b-0 cursor-pointer hover:bg-muted/30"
-                  onClick={() => onPick(row.document_id)}
-                >
-                  <td className="px-3 py-2">
-                    <span className="font-medium">{row.title}</span>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <Badge variant="outline" className="text-[10px]">{row.chunk_count}</Badge>
-                  </td>
-                  <td className="px-3 py-2 text-right text-xs text-muted-foreground">
-                    <TimeDisplay value={row.created_at} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-2 text-[11px] text-muted-foreground">点击行打开文档详情，在右侧操作区进行审批</p>
-      </CardContent>
-    </Card>
+    <div className="space-y-2">
+      <span className="text-sm font-medium">待审 ({items.length})</span>
+
+      <ReviewList
+        items={items}
+        loading={loading}
+        emptyText="该知识库当前没有待审项"
+        showActions
+        onApprove={handleApprove}
+        onReject={(item) => setRejectTarget(item)}
+        onSelect={(item) => {
+          setSelected(item)
+          setSheetOpen(true)
+          // 同步 documents tab 选中状态（用户关闭 Sheet 切到 documents 时已选好）
+          if (item.unit_type === "document") {
+            onPick(item.unit_id)
+          }
+        }}
+        selectedId={selected?.unit_id ?? null}
+      />
+
+      <ReviewDetailSheet
+        item={selected}
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        onApprove={handleApprove}
+        onReject={(item) => setRejectTarget(item)}
+        onComment={handleComment}
+      />
+
+      <RejectDialog
+        open={!!rejectTarget}
+        onOpenChange={(v) => { if (!v) setRejectTarget(null) }}
+        unitTitle={rejectTarget?.title ?? ""}
+        onConfirm={handleReject}
+      />
+    </div>
   )
 }

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
+import { InfoTip } from "@/components/shared/info-tip"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -70,6 +71,13 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
   const [autoQuestions, setAutoQuestions] = useState((chunkCfg?.auto_questions as boolean) ?? false)
   const [useRaptor, setUseRaptor] = useState((chunkCfg?.use_raptor as boolean) ?? false)
   const [raptorMaxLevels, setRaptorMaxLevels] = useState((chunkCfg?.raptor_max_levels as number) ?? 3)
+  // M6.7 — heading-only 合并 + 短 chunk contextual prefix 阈值
+  const [headingOnlyMinChars, setHeadingOnlyMinChars] = useState(
+    (chunkCfg?.heading_only_min_chars as number) ?? 30,
+  )
+  const [contextPrefixMaxChars, setContextPrefixMaxChars] = useState(
+    (chunkCfg?.context_prefix_max_chars as number) ?? 100,
+  )
   const [savingChunk, setSavingChunk] = useState(false)
   const [chunkJustSaved, triggerChunkSaved] = useJustSaved()
 
@@ -123,6 +131,8 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
     || autoQuestions !== ((origCfg.auto_questions as boolean) ?? false)
     || useRaptor !== ((origCfg.use_raptor as boolean) ?? false)
     || raptorMaxLevels !== ((origCfg.raptor_max_levels as number) ?? 3)
+    || headingOnlyMinChars !== ((origCfg.heading_only_min_chars as number) ?? 30)
+    || contextPrefixMaxChars !== ((origCfg.context_prefix_max_chars as number) ?? 100)
   )
   const retrievalChanged =
     topK !== ((retrievalCfg?.top_k as number) ?? 5) ||
@@ -199,6 +209,9 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         auto_questions: autoQuestions,
         use_raptor: useRaptor,
         raptor_max_levels: raptorMaxLevels,
+        // M6.7 — heading-only 合并 + 短 chunk contextual prefix 阈值
+        heading_only_min_chars: headingOnlyMinChars,
+        context_prefix_max_chars: contextPrefixMaxChars,
       }
       const chunkPayload = chunkingPreset === "custom"
         ? { preset: "custom", chunk_size: customChunkSize, chunk_overlap: customOverlap, delimiter: customDelimiter, layout_recognize: layoutRecognize, ...enrichment }
@@ -315,8 +328,8 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         </CardContent>
       </Card>
 
-      {/* Chunking */}
-      <Card>
+      {/* Chunking — 仅文件型 KB 显示（条目型不切片，由降级阈值自动处理） */}
+      {kb.source_type === "file" && <Card>
         <CardHeader>
           <CardTitle>分片配置</CardTitle>
           <CardDescription>选择文档分片策略预设</CardDescription>
@@ -404,6 +417,53 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
                 />
               </div>
             )}
+
+            {/* M6.7 — 噪声抑制（多语言 embedding 模型 floor 虚高的两个治理开关） */}
+            <div className="border-t pt-3">
+              <p className="mb-2 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                噪声抑制（多语言模型）
+                <InfoTip text="工程上叫「Floor 抑制」（M6.6+M6.7）。多语言 embedding 模型（BGE-M3、E5-multilingual、OpenAI text-embedding-3 等）有个通病：跨语言文本对之间余弦相似度有 0.65~0.75 的「下限基线」（floor），把无关的中文查询和英文文档都判成「有点像」。下面两个开关从切片阶段和向量化阶段降低这种噪声。仅多语言模型 + 中英混合知识库需要；纯英文模型/纯中文场景可关闭" />
+              </p>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <Label className="inline-flex items-center gap-1 text-xs">
+                      合并孤立标题切片
+                      <InfoTip text="工程上叫 heading-only chunk merge（M6.6 A 方案）。「切片（chunk）」= 文档被拆成的小段。「孤立标题切片」= 只有 markdown 标题没什么正文的切片（如「## 概述」单 4 字符）—— 这种切片 embed 时 token 太少，向量被通用语义/special token 主导，跟任何查询都给 floor 高分。本开关：识别这种切片自动合并到下一段有正文的切片里，作为 heading prefix" />
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      正文少于此字符数视为「孤立标题」，合并进下一段。设 0 = 关闭
+                    </p>
+                  </div>
+                  <Input
+                    type="number" min={0} max={500}
+                    value={headingOnlyMinChars}
+                    onChange={(e) => setHeadingOnlyMinChars(Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
+                    className="w-20 shrink-0"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <Label className="inline-flex items-center gap-1 text-xs">
+                      短切片补充上下文
+                      <InfoTip text="工程上叫 contextual embedding（M6.6 B 方案，简化自 Anthropic 提出的 Contextual Retrieval）。短切片 embed 时信息量不足，AI 不知道这段在讲哪个话题。本开关：向量化前自动在切片前面拼上它的章节标题作为上下文（比如「## Frontend\n\n短正文」），让 AI 更懂这段是哪个领域的内容。**仅作用于送给 embedding 模型的字符串，不修改 Milvus 里存的 content，UI 看到的内容不变**" />
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      正文少于此字符数时，向量化前自动补章节标题作上下文。设 0 = 关闭
+                    </p>
+                  </div>
+                  <Input
+                    type="number" min={0} max={1000}
+                    value={contextPrefixMaxChars}
+                    onChange={(e) => setContextPrefixMaxChars(Math.max(0, Math.min(1000, Number(e.target.value) || 0)))}
+                    className="w-20 shrink-0"
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                改完后需「重新处理」文档才生效（要重新切片 + 重新向量化）
+              </p>
+            </div>
           </div>
           {(chunkChanged || chunkJustSaved) && (
             <div className="flex justify-end">
@@ -422,7 +482,7 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Review workflow (Plan 29) */}
       <ReviewToggleCard kb={kb} onUpdated={onUpdated} ifUnmodifiedSince={ifUnmodifiedSince} />

@@ -17,9 +17,26 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { AlertTriangle } from "lucide-react"
-import { knowledgeApi } from "@/api/knowledge"
+import { knowledgeApi, type KBSourceType } from "@/api/knowledge"
 import { modelApi, type RegistryEntry } from "@/api/model"
+import { sourcesApi } from "@/api/sources"
 import { systemApi } from "@/api/system"
+import { cn } from "@/lib/utils"
+
+interface SourceTypeMeta {
+  value: KBSourceType
+  icon: string
+  label: string
+  description: string
+}
+
+// 仅 UI 层面的 icon/label/description 配置；"是否启用" 由后端 sources endpoint 决定
+const SOURCE_TYPE_META: SourceTypeMeta[] = [
+  { value: "file", icon: "📁", label: "文件型", description: "上传文档自动切片，适合 PDF / Word / Markdown 等" },
+  { value: "entry", icon: "📋", label: "条目型", description: "在线编辑标准条目，适合 FAQ / SOP / 客服话术" },
+  { value: "git_repo", icon: "💻", label: "代码型", description: "Git 仓库，按函数/类切片" },
+  { value: "confluence", icon: "🔗", label: "外部同步", description: "Confluence / Notion 同步" },
+]
 
 interface KBCreateDialogProps {
   open: boolean
@@ -30,6 +47,7 @@ interface KBCreateDialogProps {
 const PRESET_LABELS: Record<string, string> = { general: "通用", qa: "问答对", book: "书籍/长文", technical: "技术文档", paper: "论文/报告", custom: "自定义" }
 
 export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialogProps) {
+  const [sourceType, setSourceType] = useState<KBSourceType>("file")
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [shareToDept, setShareToDept] = useState(true)
@@ -43,6 +61,7 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
   const [autoQuestions, setAutoQuestions] = useState(false)
   const [embModels, setEmbModels] = useState<RegistryEntry[]>([])
   const [defaultEmbId, setDefaultEmbId] = useState<string>("")
+  const [enabledSourceTypes, setEnabledSourceTypes] = useState<Set<string>>(new Set(["file"]))
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -53,9 +72,14 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
     systemApi.getSettings()
       .then((s) => setDefaultEmbId((s.default_embedding_model_id as string | undefined) ?? ""))
       .catch(() => setDefaultEmbId(""))
+    // P19 — 后端动态拉取已注册 source_types，加新 plugin 自动显示
+    sourcesApi.list()
+      .then((rows) => setEnabledSourceTypes(new Set(rows.map((r) => r.source_type))))
+      .catch(() => setEnabledSourceTypes(new Set(["file"])))
   }, [open])
 
   function reset() {
+    setSourceType("file")
     setName("")
     setDescription("")
     setShareToDept(true)
@@ -78,10 +102,14 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
       await knowledgeApi.createKB({
         name: name.trim(),
         description: description.trim() || undefined,
+        source_type: sourceType,
         embedding_model_id: embModelId || undefined,
-        chunking_config: chunkingPreset === "custom"
-          ? { preset: "custom", chunk_size: customChunkSize, chunk_overlap: customOverlap, delimiter: customDelimiter, layout_recognize: layoutRecognize, auto_keywords: autoKeywords, auto_questions: autoQuestions }
-          : { preset: chunkingPreset },
+        // 条目型不需要 chunking_config（由 EntrySourcePlugin 内部降级切片处理）
+        chunking_config: sourceType !== "file"
+          ? undefined
+          : chunkingPreset === "custom"
+            ? { preset: "custom", chunk_size: customChunkSize, chunk_overlap: customOverlap, delimiter: customDelimiter, layout_recognize: layoutRecognize, auto_keywords: autoKeywords, auto_questions: autoQuestions }
+            : { preset: chunkingPreset },
         share_to_dept: shareToDept,
       })
       reset()
@@ -105,29 +133,73 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
           <DialogTitle>创建知识库</DialogTitle>
           <DialogDescription>创建一个新的知识库来管理文档和知识</DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="kb-name">名称 *</Label>
-            <Input
-              id="kb-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="输入知识库名称"
-              required
-            />
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+          {/* 身份信息 — 主区 */}
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="kb-name" className="text-sm">名称 <span className="text-destructive">*</span></Label>
+              <Input
+                id="kb-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例如：运维知识库 / 客服 SOP"
+                required
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="kb-desc" className="text-sm">描述</Label>
+              <Textarea
+                id="kb-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="一句话说明这个知识库的用途"
+                rows={2}
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="kb-desc">描述</Label>
-            <Textarea
-              id="kb-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="可选描述"
-              rows={3}
-            />
+
+          {/* 类型选择 — 紧跟身份信息 */}
+          <div className="space-y-1.5">
+            <div className="flex items-baseline justify-between">
+              <Label className="text-sm">类型</Label>
+              <span className="text-[10px] text-muted-foreground">建库后不可修改</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {SOURCE_TYPE_META.map((opt) => {
+                const enabled = enabledSourceTypes.has(opt.value)
+                const selected = enabled && sourceType === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={!enabled}
+                    onClick={() => enabled && setSourceType(opt.value)}
+                    title={enabled ? opt.description : `${opt.description}（即将开放）`}
+                    className={cn(
+                      "group flex flex-col items-center gap-1 rounded-md border px-2 py-2.5 transition-all",
+                      !enabled && "cursor-not-allowed opacity-40",
+                      selected
+                        ? "border-primary bg-primary/5 shadow-sm"
+                        : enabled && "hover:border-primary/50 hover:bg-muted/40",
+                    )}
+                  >
+                    <span className="text-base leading-none">{opt.icon}</span>
+                    <span className="text-xs font-medium leading-none">{opt.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {/* 当前选中类型的描述（避免每个 chip 上挤满字） */}
+            <p className="text-[11px] text-muted-foreground">
+              {SOURCE_TYPE_META.find((o) => o.value === sourceType)?.description}
+            </p>
           </div>
-          <div className="flex flex-col gap-2">
-            <Label>Embedding 模型</Label>
+
+          {/* 高级配置 — 模型 / 切片 / 共享 */}
+          <div className="space-y-3 border-t pt-4">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-sm">Embedding 模型</Label>
             <Select value={embModelId || undefined} onValueChange={(v) => v != null && setEmbModelId(v)}>
               <SelectTrigger className="w-full">
                 {embModelId ? (
@@ -159,8 +231,9 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
               </div>
             )}
           </div>
-          <div className="flex flex-col gap-2">
-            <Label>分片预设</Label>
+          {/* 条目型不需要 chunking 配置（降级切片自动处理） */}
+          {sourceType === "file" && <div className="flex flex-col gap-1.5">
+            <Label className="text-sm">分片预设</Label>
             <Select value={chunkingPreset} onValueChange={(v) => v && setChunkingPreset(v)}>
               <SelectTrigger className="w-full">
                 {chunkingPreset
@@ -176,8 +249,8 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
                 <SelectItem value="custom">自定义</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          {chunkingPreset === "custom" && (
+          </div>}
+          {sourceType === "file" && chunkingPreset === "custom" && (
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
               <p className="text-xs font-medium text-muted-foreground">高级分片参数</p>
               <div className="grid grid-cols-2 gap-3">
@@ -213,14 +286,15 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
               <p className="text-[10px] text-muted-foreground">自动关键词/问题：为每个分片通过 LLM 生成关键词或问题，增强检索召回率，消耗额外 token</p>
             </div>
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pt-1">
             <Checkbox
               id="kb-share"
               checked={shareToDept}
               onCheckedChange={(v) => setShareToDept(v as boolean)}
             />
-            <Label htmlFor="kb-share">共享至部门</Label>
+            <Label htmlFor="kb-share" className="text-sm font-normal">共享至我的部门</Label>
           </div>
+          </div>{/* 高级配置 end */}
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
               取消

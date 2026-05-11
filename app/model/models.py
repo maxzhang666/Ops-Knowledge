@@ -37,6 +37,9 @@ class ModelRegistryEntry(Base, UUIDMixin):
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     model_type: Mapped[str] = mapped_column(String(20), nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Milvus 治理面板：比对 KB 当前 embedding 模型维度 ≟ milvus collection 实际维度。
+    # 第一次 embed 时由 embed task 写入；切换模型/未 embed 过的 entry 为 NULL。
+    vector_dim: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -1,0 +1,9 @@
+{
+  "name": "@ops-knowledge/semi-theme",
+  "version": "1.0.0",
+  "description": "Local Semi Design theme for Ops-Knowledge — vendored from @semi-bot/semi-theme-double v1.0.1 to insulate from upstream churn",
+  "private": true,
+  "keywords": ["semi-theme", "scss"],
+  "sideEffects": "*.scss",
+  "license": "MIT"
+}

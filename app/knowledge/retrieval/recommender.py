@@ -118,6 +118,8 @@ async def gather_stats(
             RetrievalLog.kb_id == kb_id,
             RetrievalLog.query_type == qtype,
             RetrievalLog.created_at >= cutoff,
+            # M6.5 — 排除测试性 query（Workbench / Quick QA / 评估）
+            RetrievalLog.is_test.is_(False),
         )
     )).one()
     sample_size = int(log_row[0] or 0)

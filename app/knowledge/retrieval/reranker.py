@@ -31,6 +31,9 @@ async def rerank_results(
         for item in ranked:
             idx = item["index"]
             r = results[idx]
+            # Preserve the per-stage score for the Workbench breakdown UI
+            # while making the final ranking score the rerank score.
+            r.rerank_score = item["relevance_score"]
             r.score = item["relevance_score"]
             reranked.append(r)
 
