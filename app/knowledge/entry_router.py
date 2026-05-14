@@ -29,6 +29,31 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/knowledge/{kb_id}/entries", tags=["entries"])
 
 
+def _require_embedding_config(kb: KnowledgeBase) -> None:
+    """KB 未配置 embedding 模型时阻断 entry create / 内容变化的 update。
+
+    背景（#6 修复）：旧路径下，KB 未配 embedding 时 chunks 仍会落 PG，但异步
+    embed task 内部静默返回 status='error'——用户编辑器看到"已保存"，实际
+    向量永远不生成、条目永不可检索。改为入口 400 fail-fast，让用户先去 KB
+    配置页选模型。
+
+    校验通过条件（满足任一）：
+      - embedding_model_id 不为空（注册表引用）
+      - embedding_provider_id + embedding_model_name 都不为空（直连 provider）
+    """
+    if kb.embedding_model_id:
+        return
+    if kb.embedding_provider_id and kb.embedding_model_name:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            "该知识库尚未配置 Embedding 模型；请先在「知识库配置 → Embedding」"
+            "中选择一个模型，再添加 / 修改条目。"
+        ),
+    )
+
+
 async def _purge_milvus_for_entries(
     db: AsyncSession,
     kb_id: uuid.UUID,
@@ -116,6 +141,7 @@ async def create_entry(
         raise HTTPException(404, "Knowledge base not found")
     if kb.source_type != "entry":
         raise HTTPException(400, "This KB is not entry-type")
+    _require_embedding_config(kb)  # #6 — 缺 embedding 配置时 fail-fast
     await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
 
     plugin = get_plugin("entry")
@@ -223,6 +249,9 @@ async def update_entry(
     )).first()
     rechunked = existing is None
     if rechunked:
+        # #6 — content 变化才需 embed；rechunk 路径前再校验 embedding 配置。
+        # 仅改 title/folder/tags 走非 rechunk 路径，不需要 embedding 配置。
+        _require_embedding_config(kb)
         await ChunkService(db).create_chunks_for_unit("entry", entry_id, kb_id)
     await db.commit()
     if rechunked:
@@ -258,6 +287,7 @@ async def import_entries(
         raise HTTPException(404, "Knowledge base not found")
     if kb.source_type != "entry":
         raise HTTPException(400, "This KB is not entry-type")
+    _require_embedding_config(kb)  # #6 — 批量导入也需要 embedding 配置
     await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
 
     fname = (file.filename or "").lower()

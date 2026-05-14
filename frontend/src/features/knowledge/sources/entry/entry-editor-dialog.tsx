@@ -132,6 +132,7 @@ export function EntryEditorDialog({
   entry,
   defaultFolderId,
   folders,
+  embeddingConfigured,
   onSaved,
 }: {
   open: boolean
@@ -142,6 +143,8 @@ export function EntryEditorDialog({
   defaultFolderId?: string | null
   /** 文件夹列表（用于编辑时改文件夹） */
   folders: Folder[]
+  /** #6 — KB 是否已配置 embedding；false 时禁用创建 / 内容变化的编辑 */
+  embeddingConfigured: boolean
   onSaved: () => void
 }) {
   const { theme } = useTheme()
@@ -293,6 +296,18 @@ export function EntryEditorDialog({
         <div className="flex shrink-0 items-center justify-between border-b px-5 py-3">
           <DialogTitle>{entry ? `编辑：${entry.title}` : "新建条目"}</DialogTitle>
         </div>
+
+        {/* #6 — KB 缺 embedding 配置时顶部硬提示，禁用保存避免静默失败 */}
+        {!embeddingConfigured && (
+          <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2.5 text-sm">
+            <span className="font-medium text-destructive">该知识库尚未配置 Embedding 模型。</span>
+            <span className="ml-1 text-muted-foreground">
+              {entry
+                ? "可修改标题 / 标签 / 文件夹；如需修改正文，请先到「知识库配置 → Embedding」选择模型。"
+                : "请先到「知识库配置 → Embedding」选择模型，再创建条目。"}
+            </span>
+          </div>
+        )}
 
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* ── 左侧：编辑器 ─────────────────────────────────────────── */}
@@ -535,12 +550,23 @@ export function EntryEditorDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             取消
           </Button>
-          <Button
-            onClick={handleSave}
-            disabled={submitting || !title.trim() || !content.trim()}
-          >
-            {submitting ? "保存中..." : "保存"}
-          </Button>
+          {(() => {
+            // #6 — content 变化才会触发后端 rechunk + embed；未配置 embedding 时
+            // 仅当新建条目 / 编辑改正文 才禁用保存。仅改 title/tags/folder 仍可保存。
+            const contentChanged = content !== (entry?.content ?? "")
+            const blockedByEmbedding = !embeddingConfigured && (!entry || contentChanged)
+            return (
+              <Button
+                onClick={handleSave}
+                disabled={
+                  submitting || !title.trim() || !content.trim() || blockedByEmbedding
+                }
+                title={blockedByEmbedding ? "请先配置 Embedding 模型" : undefined}
+              >
+                {submitting ? "保存中..." : "保存"}
+              </Button>
+            )
+          })()}
         </div>
       </DialogContent>
     </Dialog>

@@ -393,6 +393,10 @@ export function EntriesTab({ kb }: { kb: KnowledgeBase }) {
         entry={editing}
         defaultFolderId={selectedFolderId}
         folders={folders}
+        embeddingConfigured={Boolean(
+          kb.embedding_model_id
+          || (kb.embedding_provider_id && kb.embedding_model_name),
+        )}
         onSaved={load}
       />
 
