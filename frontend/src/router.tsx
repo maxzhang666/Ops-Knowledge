@@ -8,6 +8,7 @@ import InitWizard from "@/pages/init"
 import KnowledgePage from "@/pages/knowledge"
 import KBDetailPage from "@/pages/knowledge/detail"
 import ReviewCenterPage from "@/pages/review"
+import NotificationsPage from "@/pages/notifications"
 import AgentsPage from "@/pages/agents"
 import AgentDetailPage from "@/pages/agents/detail"
 import WorkflowEditorPage from "@/pages/workflow/editor"
@@ -24,6 +25,8 @@ import ObservabilityPage from "@/pages/settings/observability"
 import CostsPage from "@/pages/settings/costs"
 import CrossKBPage from "@/pages/settings/cross-kb"
 import MilvusGovernancePage from "@/pages/settings/milvus"
+import TaskFailuresPage from "@/pages/settings/task-failures"
+import TagDictionaryPage from "@/pages/settings/tag-dictionary"
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -39,6 +42,7 @@ export const router = createBrowserRouter([
           { path: "knowledge", element: <KnowledgePage /> },
           { path: "knowledge/:id", element: <KBDetailPage /> },
           { path: "review", element: <ReviewCenterPage /> },
+          { path: "notifications", element: <NotificationsPage /> },
           { path: "agents", element: <AgentsPage /> },
           { path: "agents/:id", element: <AgentDetailPage /> },
           // /workflow/:id stays as a directly-navigable editor URL (useful for
@@ -59,6 +63,8 @@ export const router = createBrowserRouter([
               { path: "costs", element: <CostsPage /> },
               { path: "cross-kb", element: <CrossKBPage /> },
               { path: "milvus", element: <MilvusGovernancePage /> },
+              { path: "task-failures", element: <TaskFailuresPage /> },
+              { path: "tag-dictionary", element: <TagDictionaryPage /> },
               { path: "system", element: <SystemPage /> },
               { path: "profile", element: <ProfilePage /> },
               { path: "api-keys", element: <ApiKeysPage /> },

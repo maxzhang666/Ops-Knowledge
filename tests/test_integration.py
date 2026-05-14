@@ -33,8 +33,9 @@ class TestNotificationService:
         notif = await svc.send(admin_user.id, "info", "Test notification")
         assert notif.is_read is False
 
-        items = await svc.list_notifications(admin_user.id)
+        items, total = await svc.list_notifications(admin_user.id)
         assert len(items) == 1
+        assert total == 1
 
     async def test_unread_count(self, db_session, admin_user):
         from app.system.service import NotificationService

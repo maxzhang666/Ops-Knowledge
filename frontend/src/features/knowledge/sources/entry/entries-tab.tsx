@@ -181,8 +181,8 @@ export function EntriesTab({ kb }: { kb: KnowledgeBase }) {
         />
       </aside>
 
-      {/* 右栏：条目表格 */}
-      <div className="flex h-full min-w-0 flex-1 flex-col space-y-3 overflow-y-auto">
+      {/* 右栏：条目表格 — 顶栏 actions / 批量栏不滚动，仅表格自身滚动 */}
+      <div className="flex h-full min-w-0 flex-1 flex-col space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">{currentFolderName()}</span>
@@ -262,7 +262,7 @@ export function EntriesTab({ kb }: { kb: KnowledgeBase }) {
           尚未创建任何条目。点击「新建条目」开始添加 FAQ / SOP / 词条。
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">

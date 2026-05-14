@@ -72,6 +72,8 @@ class RetrievalTestRequest(BaseModel):
     rerank_registry_id: uuid.UUID | None = None  # M6.8 — 临时覆盖 reranker；
     # 仅在 rerank_enabled=True 时生效。None 时回退 KB 默认 reranker
     embedding_registry_id: uuid.UUID | None = None  # override KB embedding
+    # Spec 25 L2 — chunk_tags 过滤；{any_of, all_of, not} 任意组合，AND 串联
+    tag_filter: dict | None = None
 
 
 class RetrievalTestResultItem(BaseModel):
@@ -138,6 +140,7 @@ async def retrieval_test(
         "created_by": current_user.id,
         # Workbench 检索测试：不算真实使用，跳过治理事件 + retrieval_logs.is_test=True
         "is_test": True,
+        "tag_filter": body.tag_filter,
     }
     if rerank_on:
         # M6.8 — 临时覆盖优先级：body.rerank_registry_id > KB 默认（provider+model_name）

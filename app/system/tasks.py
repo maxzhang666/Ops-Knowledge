@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.core.celery import celery_app
 from app.core.config import settings
@@ -253,5 +253,34 @@ def consistency_scan():
                 orphan_vectors=orphan_vectors,
                 missing_files=len(missing_files),
             )
+    finally:
+        engine.dispose()
+
+
+
+@celery_app.task(name="app.system.tasks.task_failure_cleanup")
+def task_failure_cleanup():
+    """每日清理 task_failures 表 90 天前的记录（spec 19 §16）。
+
+    不区分 resolved/unresolved，满 90 天一律 hard delete，避免表无限增长。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.system.models import TaskFailure
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg")
+    engine = create_engine(sync_url)
+    try:
+        with Session(engine) as session:
+            result = session.execute(
+                delete(TaskFailure).where(TaskFailure.failed_at < cutoff)
+            )
+            session.commit()
+            logger.info(
+                "task_failure_cleanup_done", deleted=result.rowcount or 0,
+            )
+            return {"deleted": result.rowcount or 0}
     finally:
         engine.dispose()

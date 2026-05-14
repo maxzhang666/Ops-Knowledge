@@ -7,8 +7,24 @@ from app.core.config import settings
 # at flush time with "could not find table 'users'", since autodiscover
 # only loads task modules, not their FK targets.
 import app.core.orm_registry  # noqa: F401
+# 触发 celery signal handler 注册（task_failure / task_unknown）。
+# 也通过 include= 在 worker 子进程加载，保证 fork 后仍生效。
+import app.system.celery_failures  # noqa: F401
 
-celery_app = Celery("ops_knowledge", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
+celery_app = Celery(
+    "ops_knowledge",
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
+    # autodiscover_tasks 默认只找每个 package 下的 tasks.py；以下三个模块
+    # 用了非标准命名（业务上独立于主 tasks.py），需要显式 include 注册到 worker。
+    include=[
+        "app.knowledge.cascade_tasks",          # 多态 unit 级联删除
+        "app.knowledge.sources.entry_tasks",    # 条目批量导入
+        "app.knowledge.milvus.governance_tasks", # 孤儿向量扫描 / 清理
+        "app.knowledge.tagging.tasks",          # 字典治理回填 + 统计重算
+        "app.system.celery_failures",            # 失败任务 signal handler
+    ],
+)
 
 celery_app.conf.update(
     task_serializer="json",
@@ -77,6 +93,14 @@ celery_app.conf.update(
         "retrieval-recommendation-rebuild": {
             "task": "app.knowledge.retrieval.tasks.recommendation_rebuild",
             "schedule": 86400.0,  # daily — Plan 35 retrieval auto-tuning
+        },
+        "task-failure-cleanup": {
+            "task": "app.system.tasks.task_failure_cleanup",
+            "schedule": 86400.0,  # daily — 90 天后 hard delete failed task records
+        },
+        "tag-dictionary-stats-rebuild": {
+            "task": "app.knowledge.tagging.tasks.rebuild_tag_dictionary_stats",
+            "schedule": 86400.0,  # daily — Spec 25 字典 usage_count 重算
         },
     },
 )

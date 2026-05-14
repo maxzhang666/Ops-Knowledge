@@ -14,7 +14,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.models import Base, TimestampMixin, UUIDMixin
@@ -212,6 +212,10 @@ class KnowledgeEntry(Base, UUIDMixin, TimestampMixin):
     last_pending_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )
+    # Spec 25 — 自动标签：[{tag, confidence, source, extracted_at}]
+    auto_tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Spec 25 — 用户拒绝过的自动标签黑名单（下次提取跳过）
+    rejected_auto_tags: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False,
     )
@@ -263,6 +267,12 @@ class Chunk(Base):
         Boolean, default=False, nullable=False, server_default="false"
     )
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    # Spec 25 — 标签数组拍平到独立字段（非 metadata 嵌套），便于 GIN 索引 +
+    # milvus array filter，避免 JSONB 慢路径。由 chunk_service 在 create/update
+    # 时从 entry.tags ∪ filtered(auto_tags) 同步写入。
+    chunk_tags: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(64)), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

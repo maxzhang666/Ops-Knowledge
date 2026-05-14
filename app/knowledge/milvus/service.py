@@ -56,6 +56,14 @@ class MilvusService:
             FieldSchema("position", DataType.INT32),
             FieldSchema("title", DataType.VARCHAR, max_length=500),
             FieldSchema("metadata_json", DataType.VARCHAR, max_length=65535),
+            # Spec 25 — chunk_tags 拍平为 milvus 原生 ARRAY 字段，便于 array_contains
+            # filter 查询，避免 metadata_json 慢路径。max_capacity=20 与 PG 端 GIN
+            # 索引 + tag_max_per_unit=5 + 用户 tags 通常 < 15 的现实匹配。
+            FieldSchema(
+                "chunk_tags", DataType.ARRAY,
+                element_type=DataType.VARCHAR,
+                max_capacity=20, max_length=64,
+            ),
         ])
 
         bm25_fn = Function(

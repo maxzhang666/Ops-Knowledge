@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser
 from app.core.database import get_db
+from app.core.dependencies import PaginatedResponse
 from app.system.models import Notification
 from app.system.schemas import NotificationResponse
 from app.system.service import NotificationService
@@ -12,16 +13,26 @@ from app.system.service import NotificationService
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-@router.get("", response_model=list[NotificationResponse])
+@router.get("", response_model=PaginatedResponse)
 async def list_notifications(
     current_user: CurrentUser,
     is_read: bool | None = Query(None),
+    type: str | None = Query(None, description="按通知 type 过滤；省略=全部"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
+    """系统通知列表（通知中心独立页面 + Bell dropdown 共用）。"""
     svc = NotificationService(db)
-    return await svc.list_notifications(current_user.id, is_read, page, page_size)
+    items, total = await svc.list_notifications(
+        current_user.id, is_read, type, page, page_size,
+    )
+    return PaginatedResponse(
+        items=[NotificationResponse.model_validate(n).model_dump(mode="json") for n in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/unread-count")

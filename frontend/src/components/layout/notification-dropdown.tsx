@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { Bell, CheckCheck } from "lucide-react"
+import { Bell, Check, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -13,7 +13,6 @@ import {
 import { TimeDisplay } from "@/components/shared/time-display"
 import { useNotificationStore } from "@/stores/notification"
 import { resolveNotificationLink } from "@/api/notification"
-import { cn } from "@/lib/utils"
 
 const POLL_INTERVAL = 30_000
 
@@ -76,28 +75,56 @@ export function NotificationDropdown() {
           )}
         </div>
         <DropdownMenuSeparator />
-        {notifications.length === 0 ? (
-          <div className="px-3 py-6 text-center text-sm text-muted-foreground">暂无通知</div>
-        ) : (
-          notifications.slice(0, 10).map((n) => (
+        {(() => {
+          // dropdown 仅展示未读：双保险（store 端 is_read=false 查；这里再次 filter
+          // 防止 markRead 后 store 中 is_read=true 的项仍残留导致 stale 渲染）
+          const unread = notifications.filter((n) => !n.is_read).slice(0, 10)
+          if (unread.length === 0) {
+            return (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                暂无未读通知
+              </div>
+            )
+          }
+          return unread.map((n) => (
             <DropdownMenuItem
               key={n.id}
-              className="flex flex-col items-start gap-0.5 py-2"
+              className="group/notif flex items-start gap-2 py-2 pr-1.5"
               onClick={() => handleClick(n.id, resolveNotificationLink(n))}
             >
-              <div className="flex w-full items-center gap-2">
-                {!n.is_read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
-                <span className={cn("flex-1 truncate text-sm", !n.is_read && "font-medium")}>{n.title}</span>
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="truncate text-sm font-medium">{n.title}</div>
+                {n.content && (
+                  <p className="line-clamp-1 text-xs text-muted-foreground">{n.content}</p>
+                )}
+                <span className="text-[10px] text-muted-foreground">
+                  <TimeDisplay value={n.created_at} />
+                </span>
               </div>
-              {n.content && (
-                <p className="line-clamp-1 w-full text-xs text-muted-foreground">{n.content}</p>
-              )}
-              <span className="text-[10px] text-muted-foreground">
-                <TimeDisplay value={n.created_at} />
-              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0 opacity-60 hover:opacity-100"
+                title="标记已读"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  markRead(n.id)
+                }}
+              >
+                <Check className="size-3.5" />
+              </Button>
             </DropdownMenuItem>
           ))
-        )}
+        })()}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="justify-center text-xs text-muted-foreground"
+          onClick={() => navigate("/notifications")}
+        >
+          查看全部通知 →
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

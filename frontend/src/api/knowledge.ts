@@ -264,6 +264,12 @@ interface AnnotateChunkPayload {
   notes?: string | null
 }
 
+export interface TagFilter {
+  any_of?: string[]
+  all_of?: string[]
+  not?: string[]
+}
+
 interface TestRetrievalPayload {
   query: string
   top_k?: number
@@ -275,6 +281,8 @@ interface TestRetrievalPayload {
   rerank_enabled?: boolean
   rerank_registry_id?: string  // M6.8 — 临时覆盖 reranker（仅 rerank_enabled=true 生效）
   embedding_registry_id?: string
+  // Spec 25 L2 — chunk_tags 过滤；三键任意组合 AND 串联
+  tag_filter?: TagFilter
 }
 
 export interface ListRetrievalLogsParams {

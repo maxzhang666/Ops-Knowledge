@@ -44,9 +44,12 @@ from app.knowledge.router import router as kb_router
 from app.mcp.router import router as mcp_router
 from app.model.router import router as model_router
 from app.system.init_router import router as init_router
+from app.knowledge.tagging.router import router as tag_dictionary_router
+from app.knowledge.tagging.kb_settings import router as kb_tag_settings_router
 from app.system.milvus_router import router as system_milvus_router
 from app.system.notification_router import router as notification_router
 from app.system.router import router as system_router
+from app.system.task_failures_router import router as task_failures_router
 from app.system.user_router import router as user_router
 from app.workflow.node_router import router as workflow_node_router
 from app.workflow.router import router as workflow_router
@@ -209,6 +212,7 @@ app.include_router(model_router, prefix=settings.API_V1_PREFIX)
 app.include_router(mcp_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_milvus_router, prefix=settings.API_V1_PREFIX)
+app.include_router(task_failures_router, prefix=settings.API_V1_PREFIX)
 app.include_router(init_router, prefix=settings.API_V1_PREFIX)
 app.include_router(notification_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
@@ -224,6 +228,8 @@ app.include_router(kb_review_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_unit_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_entry_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_sources_router, prefix=settings.API_V1_PREFIX)
+app.include_router(tag_dictionary_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_tag_settings_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ingestion_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agent_router, prefix=settings.API_V1_PREFIX)

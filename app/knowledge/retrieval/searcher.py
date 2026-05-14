@@ -69,8 +69,38 @@ def _parse_meta(raw_meta: object) -> dict:
 
 _OUTPUT_FIELDS = [
     "content", "document_id", "folder_id",
-    "level", "title", "metadata_json",
+    "level", "title", "metadata_json", "chunk_tags",
 ]
+
+
+def _build_tag_filter_expr(tag_filter: dict | None) -> str | None:
+    """Spec 25 L2 — 把 {any_of, all_of, not} 翻译成 milvus filter 表达式。
+
+    any_of: chunk_tags ∩ given ≠ ∅ → array_contains_any(chunk_tags, [...])
+    all_of: chunk_tags ⊇ given → array_contains_all(chunk_tags, [...])
+    not:    chunk_tags ∩ given = ∅ → NOT array_contains_any(chunk_tags, [...])
+
+    三种语义可任意组合（AND 串联）。空 dict / 无字段返回 None。
+    """
+    if not tag_filter or not isinstance(tag_filter, dict):
+        return None
+
+    def _quote_list(xs: list[str]) -> str:
+        return "[" + ", ".join(f'"{x}"' for x in xs if x) + "]"
+
+    parts: list[str] = []
+    any_of = tag_filter.get("any_of") or []
+    all_of = tag_filter.get("all_of") or []
+    not_in = tag_filter.get("not") or []
+    if any_of:
+        parts.append(f"array_contains_any(chunk_tags, {_quote_list(any_of)})")
+    if all_of:
+        parts.append(f"array_contains_all(chunk_tags, {_quote_list(all_of)})")
+    if not_in:
+        parts.append(f"not array_contains_any(chunk_tags, {_quote_list(not_in)})")
+    if not parts:
+        return None
+    return " and ".join(parts)
 
 
 class HybridSearcher:
@@ -86,6 +116,7 @@ class HybridSearcher:
         folder_ids: list[str] | None = None,
         bm25_weight: float = 1.0,
         vector_weight: float = 1.0,
+        tag_filter: dict | None = None,
     ) -> list[SearchResult]:
         """Hybrid retrieval with per-route score breakdown.
 
@@ -103,10 +134,14 @@ class HybridSearcher:
             logger.debug("collection_not_yet_created", collection=collection_name)
             return []
 
-        filter_expr = None
+        parts: list[str] = []
         if folder_ids:
             ids_str = ", ".join(f'"{fid}"' for fid in folder_ids)
-            filter_expr = f"folder_id in [{ids_str}]"
+            parts.append(f"folder_id in [{ids_str}]")
+        tag_expr = _build_tag_filter_expr(tag_filter)
+        if tag_expr:
+            parts.append(tag_expr)
+        filter_expr = " and ".join(parts) if parts else None
 
         # Each route over-fetches a bit so RRF has reasonable rank coverage
         # for items that match strongly on only one route.
@@ -186,6 +221,7 @@ class HybridSearcher:
         folder_ids: list[str] | None = None,
         bm25_weight: float = 1.0,
         vector_weight: float = 1.0,
+        tag_filter: dict | None = None,
     ) -> list[SearchResult]:
         async def _search_one(cfg: dict) -> list[SearchResult]:
             loop = asyncio.get_event_loop()
@@ -199,6 +235,7 @@ class HybridSearcher:
                     folder_ids,
                     bm25_weight,
                     vector_weight,
+                    tag_filter,
                 ),
             )
             for h in hits:

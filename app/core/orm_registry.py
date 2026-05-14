@@ -29,6 +29,7 @@ from app.knowledge.evaluation import models as _kb_eval  # noqa: F401
 from app.knowledge.evaluation import golden_models as _kb_eval_golden  # noqa: F401
 from app.knowledge.governance import models as _kb_gov  # noqa: F401
 from app.knowledge.retrieval import models as _kb_ret  # noqa: F401
+from app.knowledge.tagging import models as _kb_tag  # noqa: F401
 
 from app.agent import models as _agent  # noqa: F401
 from app.agent.orchestrator import models as _orch  # noqa: F401

@@ -1,4 +1,5 @@
 import { api } from "./client"
+import type { PaginatedResponse } from "./types"
 
 export interface Notification {
   id: string
@@ -10,6 +11,13 @@ export interface Notification {
   resource_type: string | null
   resource_id: string | null
   created_at: string
+}
+
+export interface NotificationListParams {
+  is_read?: boolean
+  type?: string
+  page?: number
+  page_size?: number
 }
 
 // Only map to routes that actually exist in the frontend router (see router.tsx).
@@ -33,8 +41,14 @@ export interface UnreadCountResponse {
 }
 
 export const notificationApi = {
-  list(params?: Record<string, string>) {
-    return api.get<Notification[]>("/notifications", params)
+  list(params: NotificationListParams = {}): Promise<PaginatedResponse<Notification>> {
+    const qs = new URLSearchParams()
+    if (params.is_read !== undefined) qs.set("is_read", String(params.is_read))
+    if (params.type) qs.set("type", params.type)
+    if (params.page !== undefined) qs.set("page", String(params.page))
+    if (params.page_size !== undefined) qs.set("page_size", String(params.page_size))
+    const q = qs.toString()
+    return api.get<PaginatedResponse<Notification>>(`/notifications${q ? `?${q}` : ""}`)
   },
 
   unreadCount() {

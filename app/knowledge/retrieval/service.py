@@ -56,6 +56,8 @@ class RetrievalService:
         # record_no_result），retrieval_logs 仍写入但带 is_test=True，让 Workbench
         # 历史侧栏可见，治理统计可过滤
         is_test: bool = False,
+        # Spec 25 L2 — tag pre-filter；{any_of, all_of, not} 三键任组合
+        tag_filter: dict | None = None,
     ) -> RetrievalResult:
         t0 = time.monotonic()
         query_used = query
@@ -122,6 +124,7 @@ class RetrievalService:
                 kb_configs, query_vector, query_used,
                 top_k=top_k, folder_ids=folder_ids,
                 bm25_weight=bm25_weight, vector_weight=vector_weight,
+                tag_filter=tag_filter,
             )
         finally:
             try:

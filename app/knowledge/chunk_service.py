@@ -10,6 +10,25 @@ from app.knowledge.milvus.service import MilvusService, kb_collection_name
 from app.knowledge.models import Chunk
 from app.knowledge.quality.scorer import score_chunk
 
+
+def _compute_chunk_tags_from_unit(unit) -> list[str] | None:
+    """Spec 25 — chunks.chunk_tags = entry.tags ∪ filtered(auto_tags by confidence)。
+
+    Document 类型暂无 tags 概念，返回 None。entry 类型从 unit.tags 和 unit.auto_tags
+    合并，去重后返回。confidence 过滤的阈值由 KB 配置控制（v1 不读 kb_tag_settings，
+    在 task 端读取 — 这里只读 entry.auto_tags 已经被 confidence 过滤过的值）。
+    """
+    user_tags = getattr(unit, "tags", None) or []
+    auto = getattr(unit, "auto_tags", None) or []
+    auto_tags = [a.get("tag") for a in auto if isinstance(a, dict) and a.get("tag")]
+    merged: list[str] = []
+    seen = set()
+    for t in [*user_tags, *auto_tags]:
+        if isinstance(t, str) and t and t not in seen:
+            seen.add(t)
+            merged.append(t[:64])
+    return merged or None
+
 logger = structlog.get_logger(__name__)
 
 
@@ -64,6 +83,8 @@ class ChunkService:
         review_excluded = (
             getattr(unit, "review_status", None) in ("pending", "rejected")
         )
+        # Spec 25 — chunks.chunk_tags 拍平字段：entry.tags ∪ filtered(auto_tags)
+        chunk_tags = _compute_chunk_tags_from_unit(unit)
 
         chunks = [
             Chunk(
@@ -79,6 +100,7 @@ class ChunkService:
                 quality_score=score_chunk(seed.content),
                 metadata_=seed.metadata,
                 review_excluded=review_excluded,
+                chunk_tags=chunk_tags,
             )
             for seed in seeds
         ]

@@ -55,3 +55,46 @@ class Notification(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class TaskFailure(Base, UUIDMixin):
+    """Celery 任务失败持久化日志（详见 spec 19 §16）。
+
+    覆盖三类失败：
+    - FAILURE: task 抛异常 max_retries 用尽（task_failure signal）
+    - UNREGISTERED: worker 未注册该 task name（task_unknown signal，celery
+      默认 discard，本表是唯一痕迹）
+    - TIMEOUT: SoftTimeLimitExceeded（被 task_failure signal 自然覆盖）
+
+    daily celery beat 任务 90 天后 hard delete（system.tasks.task_failure_cleanup）。
+    """
+    __tablename__ = "task_failures"
+
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    task_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # args/kwargs 序列化：json.dumps(default=str) fallback；UNREGISTERED 时
+    # 从 message.body 解出（解失败存 base64 原始字节供调试）
+    args_json: Mapped[list | dict | None] = mapped_column(JSONB, nullable=True)
+    kwargs_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)
+    exception: Mapped[str | None] = mapped_column(Text, nullable=True)
+    traceback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retries: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    # 业务关联（从 args/kwargs 启发式推断，推不到 NULL）
+    kb_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # 重放成功（send_task 返回 task_id）后自动 set；不区分重放后是否真的执行成功
+    retried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 管理员显式标记已处理；重放也会自动 set 这个字段
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )

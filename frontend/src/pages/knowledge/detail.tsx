@@ -146,7 +146,7 @@ export default function KBDetailPage() {
           </div>
         </TabsContent>}
 
-        {kb.source_type === "entry" && <TabsContent value="entries" className="mt-4 min-h-0 flex-1 overflow-y-auto">
+        {kb.source_type === "entry" && <TabsContent value="entries" className="mt-4 min-h-0 flex-1 overflow-hidden">
           <EntriesTab kb={kb} />
         </TabsContent>}
 

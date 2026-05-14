@@ -119,12 +119,19 @@ class EntrySourcePlugin(IngestionPlugin):
         if kb is None:
             raise ValueError("Knowledge base not found")
 
+        # Spec 25 — 用户标签强制 normalize（命中字典 / 未命中创建 canonical）
+        from app.knowledge.tagging.normalizer import normalize_tags
+        normalized_tags = await normalize_tags(
+            db, kb_id, payload.get("tags") or [],
+            allow_create=True, actor_id=payload.get("author_id"),
+        )
+
         entry = KnowledgeEntry(
             knowledge_base_id=kb_id,
             folder_id=payload.get("folder_id"),
             title=payload["title"],
             content=payload["content"],
-            tags=payload.get("tags"),
+            tags=normalized_tags or None,
             token_count=_estimate_tokens(payload["content"]),
             created_by=payload["author_id"],
         )
@@ -149,10 +156,20 @@ class EntrySourcePlugin(IngestionPlugin):
         if entry is None:
             raise ValueError("Entry not found")
 
+        # Spec 25 — tags 在变更检测之前先 normalize（命中字典则 canonical 一致）
+        normalized_new_tags: list[str] | None = None
+        if "tags" in payload:
+            from app.knowledge.tagging.normalizer import normalize_tags
+            normalized_new_tags = await normalize_tags(
+                db, entry.knowledge_base_id, payload.get("tags") or [],
+                allow_create=True,
+            )
+
         material_changed = (
             payload.get("title", entry.title) != entry.title
             or payload.get("content", entry.content) != entry.content
-            or payload.get("tags", entry.tags) != entry.tags
+            or (normalized_new_tags is not None
+                and normalized_new_tags != (entry.tags or []))
         )
         # 应用字段更新
         if "title" in payload:
@@ -160,8 +177,8 @@ class EntrySourcePlugin(IngestionPlugin):
         if "content" in payload:
             entry.content = payload["content"]
             entry.token_count = _estimate_tokens(payload["content"])
-        if "tags" in payload:
-            entry.tags = payload["tags"]
+        if normalized_new_tags is not None:
+            entry.tags = normalized_new_tags or None
         if "folder_id" in payload:
             entry.folder_id = payload["folder_id"]
 

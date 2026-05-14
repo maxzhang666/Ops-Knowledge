@@ -150,6 +150,8 @@ def embed_unit_chunks(self, unit_type: str, unit_id: str, kb_id: str) -> dict:
                     "position": c.position,
                     "title": unit_title,
                     "metadata": c.metadata_,
+                    # Spec 25 L1 — chunk_tags 注入 embedding 输入文本
+                    "chunk_tags": list(c.chunk_tags or []),
                 }
                 for c in chunks
             ]
@@ -346,6 +348,8 @@ def reindex_kb(self, kb_id: str) -> dict:
                     "position": c.position,
                     "title": _title_for(c),
                     "metadata": c.metadata_,
+                    # Spec 25 L1 — reindex 时同样注入 chunk_tags
+                    "chunk_tags": list(c.chunk_tags or []),
                 }
                 for c in chunks
             ]

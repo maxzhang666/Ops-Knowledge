@@ -23,9 +23,9 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
   async loadNotifications() {
     try {
-      const res = await notificationApi.list({ page_size: "20" })
-      const list = Array.isArray(res) ? res : (res as any).items ?? []
-      set({ notifications: list })
+      // Bell dropdown 只展示未读；已读由通知中心 (/notifications) 查阅
+      const res = await notificationApi.list({ page_size: 20, is_read: false })
+      set({ notifications: res.items })
     } catch { /* silent */ }
   },
 

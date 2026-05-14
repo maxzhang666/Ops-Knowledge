@@ -57,11 +57,14 @@ function DropdownMenuLabel({
   className,
   inset,
   ...props
-}: MenuPrimitive.GroupLabel.Props & {
+}: React.HTMLAttributes<HTMLDivElement> & {
   inset?: boolean
 }) {
+  // 注意：原实现是 MenuPrimitive.GroupLabel，强制要求 <Menu.Group> context，
+  // 但项目里 Label 多用作 dropdown 顶部标题（非真"分组"），导致 base-ui 抛
+  // "MenuGroupRootContext is missing"。改用普通 div 渲染，保持视觉一致。
   return (
-    <MenuPrimitive.GroupLabel
+    <div
       data-slot="dropdown-menu-label"
       data-inset={inset}
       className={cn(

@@ -135,15 +135,25 @@ class NotificationService:
         self,
         user_id: uuid.UUID,
         is_read: bool | None = None,
+        notif_type: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> list[Notification]:
-        stmt = select(Notification).where(Notification.user_id == user_id)
+    ) -> tuple[list[Notification], int]:
+        """Return (items, total)。total 用于前端分页（通知中心独立页面）。"""
+        base = select(Notification).where(Notification.user_id == user_id)
         if is_read is not None:
-            stmt = stmt.where(Notification.is_read == is_read)
-        stmt = stmt.order_by(Notification.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+            base = base.where(Notification.is_read == is_read)
+        if notif_type:
+            base = base.where(Notification.type == notif_type)
+        total = int((await self.db.execute(
+            select(func.count()).select_from(base.subquery())
+        )).scalar() or 0)
+        stmt = (
+            base.order_by(Notification.created_at.desc())
+            .offset((page - 1) * page_size).limit(page_size)
+        )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        return list(result.scalars().all()), total
 
     async def unread_count(self, user_id: uuid.UUID) -> int:
         stmt = select(func.count()).where(

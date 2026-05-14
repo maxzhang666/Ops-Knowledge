@@ -68,6 +68,10 @@ class KBService:
         await self.db.flush()
         await self.db.refresh(kb)  # load server-generated created_at/updated_at/counts
 
+        # Spec 25 — 默认 balanced preset 落档；后续 KB 配置可改 preset 或 custom 字段
+        from app.knowledge.tagging.kb_settings import KBTagSettingsService
+        await KBTagSettingsService(self.db).get_or_create_default(kb.id)
+
         if data.share_to_dept:
             dept_svc = DepartmentService(self.db)
             dept_ids = await dept_svc.get_user_department_ids(user_id)

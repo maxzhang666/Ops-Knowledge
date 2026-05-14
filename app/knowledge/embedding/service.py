@@ -18,32 +18,55 @@ logger = structlog.get_logger(__name__)
 _CONTEXT_PREFIX_CHAR_THRESHOLD = 100
 
 
+_MAX_TAGS_IN_PREFIX = 10
+_MAX_TAG_PREFIX_CHARS = 200
+
+
 def _build_embedding_text(chunk: dict, threshold: int = _CONTEXT_PREFIX_CHAR_THRESHOLD) -> str:
     """Compose the string actually sent to the embedding model.
 
-    短 chunk 拼 metadata.heading（不拼 doc.title 避免命名噪声）；长 chunk
-    保持 content 原样。这是 contextual retrieval 的简化变种。
+    Spec 25 L1：在原有 heading prefix 基础上叠加 tags prefix，结构化为
+    `[TAGS] ... [TITLE] ... [CONTENT] ...`，配合 instruct-style embedding
+    模型（bge-m3 等）让向量空间编码主题信号。Milvus 中存的 content 字段保持
+    原文（searcher 展示用），仅 embedding 输入文本变化。
 
-    M6.7 — `threshold` 可被 KB 级 `context_prefix_max_chars` override；
-    设 0 关闭。content 已以 heading 开头时跳过 prefix（M6.6 A 合并后产
-    生的 chunk 已含 heading，避免 B 再拼一次造成 heading 重复）。
+    顺序：
+      1. 若有 chunk_tags → 拼 [TAGS]
+      2. 若短 chunk + heading → 拼 [TITLE] heading
+      3. 总是带 [CONTENT] content（标记块边界，便于模型分辨）
+
+    无 tags 且无 heading 时退化为原 content（避免 [CONTENT] 标签污染常规
+    长 chunk 的 embedding 形态）。
     """
     content = chunk.get("content", "") or ""
-    if threshold <= 0 or len(content) >= threshold:
-        return content
+    tags = chunk.get("chunk_tags") or []
+    if isinstance(tags, (list, tuple)):
+        tag_list = [str(t).strip() for t in tags[:_MAX_TAGS_IN_PREFIX] if t]
+    else:
+        tag_list = []
+
+    # 1. heading prefix（M6.7 行为保留）
     heading = ""
     metadata = chunk.get("metadata") or {}
     if isinstance(metadata, dict):
         heading = metadata.get("heading") or ""
-    if not heading:
+    use_heading = (
+        bool(heading) and threshold > 0 and len(content) < threshold
+        and f"{heading}\n\n" not in content
+    )
+
+    # 2. 无 tags 且无 heading → 完全保留原始 content（M6.6 默认行为）
+    if not tag_list and not use_heading:
         return content
-    # M6.7 — 防 heading 重复：A 合并后产出的 chunk 形如
-    # `"## A\n\n## B\n\n正文"`，metadata.heading 取最后一个（"## B"），
-    # startswith 只看第一个 heading 抓不准。改用"heading 段后跟空行"
-    # 子串判定，覆盖 heading 出现在 content 任意层级的情况。
-    if f"{heading}\n\n" in content:
-        return content
-    return f"{heading}\n\n{content}"
+
+    parts: list[str] = []
+    if tag_list:
+        tag_str = ", ".join(tag_list)[:_MAX_TAG_PREFIX_CHARS]
+        parts.append(f"[TAGS] {tag_str}")
+    if use_heading:
+        parts.append(f"[TITLE] {heading}")
+    parts.append(f"[CONTENT] {content}")
+    return "\n".join(parts)
 
 
 class EmbeddingService:
@@ -95,6 +118,8 @@ class EmbeddingService:
 
             rows = []
             for c, vec in zip(batch, vectors):
+                raw_tags = c.get("chunk_tags") or []
+                tag_list = [str(t)[:64] for t in raw_tags if t][:20] if isinstance(raw_tags, (list, tuple)) else []
                 rows.append({
                     "id": str(c["id"]),
                     "dense_vector": vec,
@@ -105,6 +130,7 @@ class EmbeddingService:
                     "position": c.get("position", 0),
                     "title": c.get("title", "")[:500],
                     "metadata_json": json.dumps(c.get("metadata") or {}, ensure_ascii=False)[:65535],
+                    "chunk_tags": tag_list,
                 })
 
             # Use upsert (not insert) so a partially-failed task can retry

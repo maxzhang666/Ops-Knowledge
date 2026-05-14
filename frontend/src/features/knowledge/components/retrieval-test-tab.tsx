@@ -16,6 +16,7 @@ import {
   type GovernanceHealth,
 } from "@/api/knowledge"
 import { modelApi, type RegistryEntry } from "@/api/model"
+import { tagDictionaryApi } from "@/api/tag_dictionary"
 import { InfoTip } from "@/components/shared/info-tip"
 
 interface RetrievalTestTabProps {
@@ -33,6 +34,10 @@ interface SearchParams {
   rerank_enabled: boolean
   rerank_registry_id: string  // M6.8 — empty = use KB default reranker
   embedding_registry_id: string  // empty = use KB default
+  // Spec 25 L2 — chunks.chunk_tags 过滤（三键各自数组，AND 串联）
+  tag_any_of: string[]
+  tag_all_of: string[]
+  tag_not: string[]
 }
 
 const DEFAULT_PARAMS: SearchParams = {
@@ -43,6 +48,9 @@ const DEFAULT_PARAMS: SearchParams = {
   rerank_enabled: false,
   rerank_registry_id: "",
   embedding_registry_id: "",
+  tag_any_of: [],
+  tag_all_of: [],
+  tag_not: [],
 }
 
 interface RecommendationPayload {
@@ -99,11 +107,18 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
   const [embeddingOptions, setEmbeddingOptions] = useState<RegistryEntry[]>([])
   // M6.8 — reranker model registry list for the rerank-enabled section
   const [rerankerOptions, setRerankerOptions] = useState<RegistryEntry[]>([])
+  // Spec 25 — KB 字典 canonical 列表，供 tag filter multi-select 联想
+  const [tagOptions, setTagOptions] = useState<string[]>([])
   useEffect(() => {
     modelApi.listRegistry({ model_type: "reranker", enabled_only: "true" })
       .then((list) => setRerankerOptions(Array.isArray(list) ? list : []))
       .catch(() => setRerankerOptions([]))
   }, [])
+  useEffect(() => {
+    tagDictionaryApi.list(kbId, { page_size: 200 })
+      .then((r) => setTagOptions(r.items.map((it) => it.canonical)))
+      .catch(() => setTagOptions([]))
+  }, [kbId])
 
   // M3 — feedback bookkeeping: chunk_id → "up" | "down" | undefined.
   // Reset whenever a different result set is rendered so we don't carry
@@ -350,6 +365,14 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
     if (!query.trim()) return
     setLoading(true)
     try {
+      // Spec 25 L2 — tag_filter 仅在有任一非空数组时透传，避免空 dict 引发后端 noop
+      const tagFilter = (
+        params.tag_any_of.length || params.tag_all_of.length || params.tag_not.length
+      ) ? {
+        any_of: params.tag_any_of.length ? params.tag_any_of : undefined,
+        all_of: params.tag_all_of.length ? params.tag_all_of : undefined,
+        not: params.tag_not.length ? params.tag_not : undefined,
+      } : undefined
       const res = await knowledgeApi.testRetrieval(kbId, {
         query: query.trim(),
         top_k: params.top_k,
@@ -362,6 +385,7 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
             ? params.rerank_registry_id
             : undefined,
         embedding_registry_id: params.embedding_registry_id || undefined,
+        tag_filter: tagFilter,
       })
       setResults(res.results)
       setQueryUsed(res.query_used)
@@ -406,6 +430,7 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
     setActiveLogId(log.id)
     if (log.params) {
       const p = log.params as Record<string, unknown>
+      const tf = (p.tag_filter as Record<string, unknown> | undefined) ?? {}
       setParams({
         top_k: (p.top_k as number) ?? DEFAULT_PARAMS.top_k,
         bm25_weight: (p.bm25_weight as number) ?? DEFAULT_PARAMS.bm25_weight,
@@ -414,6 +439,9 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
         rerank_enabled: Boolean(p.rerank_enabled),
         rerank_registry_id: (p.rerank_registry_id as string) ?? "",
         embedding_registry_id: (p.embedding_registry_id as string) ?? "",
+        tag_any_of: Array.isArray(tf.any_of) ? (tf.any_of as string[]) : [],
+        tag_all_of: Array.isArray(tf.all_of) ? (tf.all_of as string[]) : [],
+        tag_not: Array.isArray(tf.not) ? (tf.not as string[]) : [],
       })
     }
     // Pull the snapshot of the hit list captured at retrieval time, NOT
@@ -478,6 +506,7 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
               onChange={setParams}
               embeddingOptions={embeddingOptions}
               rerankerOptions={rerankerOptions}
+              tagOptions={tagOptions}
               llmOptions={llmOptions}
               llmId={llmId}
               onLlmChange={setLlmId}
@@ -1014,7 +1043,7 @@ function ParamsSummary({ p }: { p: SearchParams }) {
 }
 
 function ParamsPanel({
-  value, onChange, embeddingOptions, rerankerOptions, llmOptions, llmId, onLlmChange,
+  value, onChange, embeddingOptions, rerankerOptions, tagOptions, llmOptions, llmId, onLlmChange,
   recommendations, onApplyRecommendation,
   thresholdSuggestion,
   onSaveAsDefault, savingDefault,
@@ -1023,6 +1052,7 @@ function ParamsPanel({
   onChange: (next: SearchParams) => void
   embeddingOptions: RegistryEntry[]
   rerankerOptions: RegistryEntry[]
+  tagOptions: string[]
   llmOptions: RegistryEntry[]
   llmId: string
   onLlmChange: (id: string) => void
@@ -1186,6 +1216,68 @@ function ParamsPanel({
       </ModuleBox>
 
       </div>
+
+      <ModuleBox
+        icon={Filter}
+        title="标签过滤"
+        subtitle="· 限定召回必须 / 至少 / 不含某些标签（来自 KB 字典）"
+      >
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-3">
+          <Field
+            label="任一命中（any of）"
+            tip="召回 chunk 的 tags 至少包含这里勾选的一个标签。多选语义 OR；留空= 不约束。常用于扩大检索领域"
+          >
+            <Select
+              multiple
+              value={value.tag_any_of}
+              onChange={(v) => update("tag_any_of", (v as string[]) ?? [])}
+              placeholder="不约束"
+              showClear
+              filter
+            >
+              {tagOptions.map((t) => (
+                <Select.Option key={`any-${t}`} value={t}>{t}</Select.Option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field
+            label="全部命中（all of）"
+            tip="召回 chunk 的 tags 必须同时包含所有勾选项。多选语义 AND；留空= 不约束。用于「同时具备 X 和 Y 标签」的精准筛选"
+          >
+            <Select
+              multiple
+              value={value.tag_all_of}
+              onChange={(v) => update("tag_all_of", (v as string[]) ?? [])}
+              placeholder="不约束"
+              showClear
+              filter
+            >
+              {tagOptions.map((t) => (
+                <Select.Option key={`all-${t}`} value={t}>{t}</Select.Option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field
+            label="排除（not）"
+            tip="召回 chunk 的 tags 不允许包含勾选项中的任意一个。用于排除不想看到的话题域，比如把营销内容排除掉只看售后"
+          >
+            <Select
+              multiple
+              value={value.tag_not}
+              onChange={(v) => update("tag_not", (v as string[]) ?? [])}
+              placeholder="不约束"
+              showClear
+              filter
+            >
+              {tagOptions.map((t) => (
+                <Select.Option key={`not-${t}`} value={t}>{t}</Select.Option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      </ModuleBox>
 
       <ModuleBox icon={Cpu} title="模型临时覆盖" subtitle="· 仅本次查询生效，不改 KB 配置">
         <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
