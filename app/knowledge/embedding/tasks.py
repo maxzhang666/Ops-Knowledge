@@ -470,3 +470,88 @@ def reindex_kb(self, kb_id: str) -> dict:
     finally:
         milvus_svc.close()
         engine.dispose()
+
+
+# ── #4 修复：向量化 backlog 定期补偿 ─────────────────────────────────
+
+
+_BACKLOG_AGE_SECONDS = 5 * 60   # chunk 落 PG 后超过 5 分钟仍未 embed 视为失联
+_BACKLOG_PER_RUN_LIMIT = 200     # 单次扫描最多重 enqueue 的 unit 数（防雪崩）
+
+
+@shared_task(name="app.knowledge.embedding.tasks.vector_backlog_compensation")
+def vector_backlog_compensation() -> dict:
+    """定期扫 chunks.vector_id IS NULL 超过 5 分钟的 unit，重新 enqueue embed_unit_chunks。
+
+    覆盖三类失联场景：
+      1. safe_delay enqueue 时 broker 不可达（已记 DISPATCH_FAILED 但 task 没跑）
+      2. worker 进程异常退出，task 没 ack 也没 retry
+      3. 历史 chunks 在 worker include= 列表缺失时残留
+
+    幂等：embed_unit_chunks 内部 WHERE vector_id IS NULL，已 embed 的 chunk 不会
+    重复写 Milvus；同一 unit 短时间重复 enqueue 最多 race-condition 多跑一次。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import distinct
+
+    from app.core.tasks import safe_delay
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_BACKLOG_AGE_SECONDS)
+    engine = _get_sync_engine()
+    enqueued = 0
+    triplets: list[tuple[str, str, str]] = []
+    try:
+        with Session(engine) as session:
+            # 按 (unit_type, unit_id, kb_id) 去重；按 unit 而非 chunk enqueue，避免
+            # 一个 unit 有 N chunks 时 N 次重复 enqueue 同一 task。
+            rows = session.execute(
+                select(
+                    distinct(Chunk.unit_type).label("ut"),
+                    Chunk.unit_id, Chunk.knowledge_base_id,
+                )
+                .where(
+                    Chunk.vector_id.is_(None),
+                    Chunk.created_at < cutoff,
+                )
+                .limit(_BACKLOG_PER_RUN_LIMIT)
+            ).all()
+            triplets = [
+                (str(r.ut), str(r.unit_id), str(r.knowledge_base_id))
+                for r in rows
+            ]
+    finally:
+        engine.dispose()
+
+    for unit_type, unit_id, kb_id in triplets:
+        safe_delay(embed_unit_chunks, unit_type, unit_id, kb_id)
+        enqueued += 1
+
+    if enqueued:
+        logger.warning(
+            "vector_backlog_compensation_enqueued",
+            count=enqueued, cutoff_seconds=_BACKLOG_AGE_SECONDS,
+        )
+    return {"status": "completed", "enqueued": enqueued}
+
+
+@shared_task(name="app.knowledge.embedding.tasks.vector_backlog_count")
+def vector_backlog_count() -> int:
+    """同步返回 backlog 大小供 UI 卡片显示；不修改任何状态。"""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func as sa_func
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_BACKLOG_AGE_SECONDS)
+    engine = _get_sync_engine()
+    try:
+        with Session(engine) as session:
+            n = int((session.execute(
+                select(sa_func.count(Chunk.id)).where(
+                    Chunk.vector_id.is_(None),
+                    Chunk.created_at < cutoff,
+                )
+            )).scalar() or 0)
+            return n
+    finally:
+        engine.dispose()

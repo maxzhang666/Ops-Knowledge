@@ -103,6 +103,10 @@ celery_app.conf.update(
             "task": "app.knowledge.tagging.tasks.rebuild_tag_dictionary_stats",
             "schedule": 86400.0,  # daily — Spec 25 字典 usage_count 重算
         },
+        "vector-backlog-compensation": {
+            "task": "app.knowledge.embedding.tasks.vector_backlog_compensation",
+            "schedule": 300.0,  # 5 min — #4 修复：补偿 enqueue 失败 / worker 退出导致的失联 chunk
+        },
     },
 )
 celery_app.autodiscover_tasks(

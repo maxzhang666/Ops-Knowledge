@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import {
-  AlertOctagon, CheckCircle2, Copy, RefreshCw, RotateCcw, X,
+  AlertOctagon, AlertTriangle, CheckCircle2, Copy, RefreshCw, RotateCcw, X, Zap,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -55,6 +55,9 @@ export default function TaskFailuresPage() {
   const [detail, setDetail] = useState<TaskFailureDetail | null>(null)
   const [retryTarget, setRetryTarget] = useState<TaskFailureItem | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  // #4 — 待向量化 chunk backlog (vector_id IS NULL 且 5min+)
+  const [backlogCount, setBacklogCount] = useState<number | null>(null)
+  const [backlogBusy, setBacklogBusy] = useState(false)
 
   const fetchList = useCallback(async () => {
     setLoading(true)
@@ -75,6 +78,33 @@ export default function TaskFailuresPage() {
   useEffect(() => {
     fetchList()
   }, [fetchList])
+
+  const fetchBacklog = useCallback(async () => {
+    try {
+      const { count } = await taskFailuresApi.vectorBacklog()
+      setBacklogCount(count)
+    } catch {
+      // 静默 — 卡片不显示
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchBacklog()
+  }, [fetchBacklog])
+
+  async function handleCompensateBacklog() {
+    setBacklogBusy(true)
+    try {
+      const { task_id } = await taskFailuresApi.compensateVectorBacklog()
+      toast.success(`已触发补偿任务（id: ${task_id.slice(0, 8)}…），稍后刷新查看效果`)
+      // 等几秒再刷一次让 worker 处理完
+      setTimeout(fetchBacklog, 4000)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "触发失败")
+    } finally {
+      setBacklogBusy(false)
+    }
+  }
 
   async function openDetail(id: string) {
     try {
@@ -122,11 +152,37 @@ export default function TaskFailuresPage() {
             Celery 队列异常 / 未注册任务 / 超时持久化日志；支持手动重放与标记已处理；90 天后自动清理
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={fetchList} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => { fetchList(); fetchBacklog() }} disabled={loading}>
           <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
           <span className="ml-1">刷新</span>
         </Button>
       </header>
+
+      {/* #4 — 待向量化 chunk backlog；> 0 时显示警示卡 + 立即补偿按钮 */}
+      {backlogCount !== null && backlogCount > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/5 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+            <div className="text-sm">
+              <div className="font-medium">
+                有 {backlogCount} 个 chunk 落 PG 超 5 分钟仍未向量化
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                可能原因：broker 不可达 dispatch 失败 / worker 异常退出 / 任务丢失。
+                Beat 每 5 分钟自动补偿一次；或点右侧立即触发。
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleCompensateBacklog}
+            disabled={backlogBusy}
+          >
+            <Zap className="mr-1 size-3.5" />
+            {backlogBusy ? "触发中..." : "立即补偿"}
+          </Button>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <select

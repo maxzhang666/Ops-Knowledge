@@ -68,6 +68,18 @@ class PendingCount(BaseModel):
     count: int
 
 
+class VectorBacklog(BaseModel):
+    """#4 — chunks.vector_id IS NULL 且 5 分钟前已落 PG 的 chunk 数。
+    非零 = 有 unit embed 失联（enqueue 失败 / worker 退出 / 任务 lost）。"""
+    count: int
+    age_seconds: int = 300
+
+
+class CompensateResponse(BaseModel):
+    task_id: str
+    status: str = "accepted"
+
+
 @router.get("/failures", response_model=PaginatedResponse)
 async def list_failures(
     current_user: CurrentUser,
@@ -186,6 +198,48 @@ async def retry_failure(
         actor=str(current_user.id),
     )
     return RetryResponse(task_id=result.id)
+
+
+@router.get("/vector-backlog", response_model=VectorBacklog)
+async def get_vector_backlog(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """#4 — 待向量化 chunk backlog 实时计数（5 分钟阈值）。
+
+    UI 在队列治理页面展示：> 0 时弹黄色警示 + "立即补偿" 按钮。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.knowledge.models import Chunk
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=300)
+    count = int((await db.execute(
+        select(func.count(Chunk.id)).where(
+            Chunk.vector_id.is_(None),
+            Chunk.created_at < cutoff,
+        )
+    )).scalar() or 0)
+    return VectorBacklog(count=count, age_seconds=300)
+
+
+@router.post(
+    "/vector-backlog/compensate",
+    response_model=CompensateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def compensate_vector_backlog(
+    current_user: CurrentUser,
+):
+    """#4 — 手动触发 backlog 补偿（绕过 beat 5 分钟周期）。"""
+    result = celery_app.send_task(
+        "app.knowledge.embedding.tasks.vector_backlog_compensation",
+    )
+    logger.info(
+        "vector_backlog_compensation_manual_trigger",
+        task_id=result.id, actor=str(current_user.id),
+    )
+    return CompensateResponse(task_id=result.id)
 
 
 @router.post(

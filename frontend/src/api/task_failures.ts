@@ -63,4 +63,12 @@ export const taskFailuresApi = {
   /** Header badge：最近 24h failed AND resolved_at IS NULL */
   pendingCount: (): Promise<{ count: number }> =>
     api.get("/system/celery/failures/pending/count"),
+
+  /** #4 — 待向量化 chunk backlog (vector_id IS NULL 且 5min+) */
+  vectorBacklog: (): Promise<{ count: number; age_seconds: number }> =>
+    api.get("/system/celery/vector-backlog"),
+
+  /** #4 — 手动触发 backlog 补偿（绕过 beat 5 分钟周期） */
+  compensateVectorBacklog: (): Promise<{ task_id: string; status: "accepted" }> =>
+    api.post("/system/celery/vector-backlog/compensate"),
 }
