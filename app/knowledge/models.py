@@ -177,6 +177,9 @@ class KnowledgeEntry(Base, UUIDMixin, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # #5 — sha256(content) 用于 update 路径短路：内容无变化时跳过 rechunk + reembed。
+    # 不参与 title/tags/folder 这些"无需重 embed"的字段判定。
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     token_count: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, server_default="0",

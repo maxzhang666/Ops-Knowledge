@@ -242,6 +242,8 @@ async def update_entry(
 
     plugin = get_plugin("entry")
     payload = data.model_dump(exclude_unset=True)
+    # #5 — 记录前置 tags 快照，plugin 调用后可比对判 tags-only 变化
+    old_tags = list(entry.tags or [])
     # plugin.update_unit 已删旧 chunks（如内容变化），这里同步重建
     await plugin.update_unit(db, entry_id, payload)
     existing = (await db.execute(
@@ -253,6 +255,9 @@ async def update_entry(
         # 仅改 title/folder/tags 走非 rechunk 路径，不需要 embedding 配置。
         _require_embedding_config(kb)
         await ChunkService(db).create_chunks_for_unit("entry", entry_id, kb_id)
+    # #5 — tags-only 变化：plugin 未删 chunks 但 user tags 改了 → 需要刷 chunk_tags
+    new_tags = list(entry.tags or [])
+    tags_only_changed = (not rechunked) and (old_tags != new_tags)
     await db.commit()
     if rechunked:
         # 1. 先清掉 milvus 里旧 chunk 向量，避免检索读到老内容（核心 bugfix）
@@ -261,6 +266,11 @@ async def update_entry(
         from app.knowledge.embedding.tasks import embed_unit_chunks
         from app.core.tasks import safe_delay
         safe_delay(embed_unit_chunks, "entry", str(entry_id), str(kb_id))
+    elif tags_only_changed:
+        # #5 — 仅手动标签变化：跳过 embed，触发轻量 sync (PG chunk_tags + Milvus)
+        from app.knowledge.tagging.extract_tasks import refresh_user_tags
+        from app.core.tasks import safe_delay
+        safe_delay(refresh_user_tags, "entry", str(entry_id))
     await db.refresh(entry)
     logger.info(
         "entry.updated",

@@ -13,12 +13,18 @@ import 时自动注册到 SOURCE_PLUGINS。
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _content_hash(content: str) -> str:
+    """sha256 hex of content; matches alembic 0060 backfill format."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 from app.knowledge.models import Chunk, KnowledgeBase, KnowledgeEntry
 from app.knowledge.sources.base import (
@@ -131,6 +137,7 @@ class EntrySourcePlugin(IngestionPlugin):
             folder_id=payload.get("folder_id"),
             title=payload["title"],
             content=payload["content"],
+            content_hash=_content_hash(payload["content"]),
             tags=normalized_tags or None,
             token_count=_estimate_tokens(payload["content"]),
             created_by=payload["author_id"],
@@ -165,24 +172,42 @@ class EntrySourcePlugin(IngestionPlugin):
                 allow_create=True,
             )
 
-        material_changed = (
-            payload.get("title", entry.title) != entry.title
-            or payload.get("content", entry.content) != entry.content
-            or (normalized_new_tags is not None
-                and normalized_new_tags != (entry.tags or []))
+        # #5 — 用 content_hash 短路 content 字符串比较：仅当新旧 hash 不同
+        # 才视为内容物质变化（需要 rechunk + reembed）。tags 仅参与 review
+        # state 判定，**不**触发 material_changed —— 标签变化在 retrieval 链
+        # 单独走 Milvus update_chunk_tags（见 #244）。
+        new_content = payload.get("content", entry.content)
+        new_hash = _content_hash(new_content) if "content" in payload else entry.content_hash
+        content_changed = (
+            "content" in payload
+            and (entry.content_hash is None or new_hash != entry.content_hash)
         )
+        title_changed = (
+            "title" in payload and payload["title"] != entry.title
+        )
+        tags_changed = (
+            normalized_new_tags is not None
+            and normalized_new_tags != (entry.tags or [])
+        )
+        # material_changed 仅当 content 真正变化（决定 rechunk + reembed 路径）；
+        # title/tags 单独追踪用于 review reset（spec 19 §14.1 "任何字段变化进 review"）
+        material_changed = content_changed
+        any_review_relevant_change = content_changed or title_changed or tags_changed
+
         # 应用字段更新
         if "title" in payload:
             entry.title = payload["title"]
         if "content" in payload:
             entry.content = payload["content"]
+            entry.content_hash = new_hash
             entry.token_count = _estimate_tokens(payload["content"])
         if normalized_new_tags is not None:
             entry.tags = normalized_new_tags or None
         if "folder_id" in payload:
             entry.folder_id = payload["folder_id"]
 
-        if material_changed:
+        # review_required 的 KB：任何字段变化都重置 review state（spec 19 §14.1）
+        if any_review_relevant_change:
             kb = await db.get(KnowledgeBase, entry.knowledge_base_id)
             if kb is not None and kb.review_required:
                 entry.review_status = "pending"
@@ -190,13 +215,15 @@ class EntrySourcePlugin(IngestionPlugin):
                 entry.reviewer_id = None
                 entry.reviewed_at = None
                 entry.review_comment = None
+
+        # rechunk + reembed 仅在 content 真正变化时触发
+        if material_changed:
             # 删旧 chunks（待重新切片产出新 chunks）
             await db.execute(
                 delete(Chunk).where(
                     Chunk.unit_type == "entry", Chunk.unit_id == unit_id,
                 )
             )
-            # 状态回到 processing：内容变化 → 重切 + 重 embed
             entry.status = "processing"
             entry.error_message = None
         await db.flush()

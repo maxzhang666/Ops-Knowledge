@@ -190,6 +190,83 @@ def extract_auto_tags(self, unit_type: str, unit_id: str) -> dict:
         engine.dispose()
 
 
+@shared_task(name="app.knowledge.tagging.extract_tasks.refresh_user_tags")
+def refresh_user_tags(unit_type: str, unit_id: str) -> dict:
+    """#5 — tags-only 变化路径：仅刷 chunks.chunk_tags（PG）+ Milvus 同步。
+
+    与 extract_auto_tags 的区别：**不调 extractor**（不跑 KeyBERT/LLM），不动
+    entry.auto_tags；只重算 user_tags ∪ auto_tags 的合并集合并写回 chunks。
+    用于"用户改了手动 tag"这种纯标签操作，避免重 embed 也避免重跑 extractor。
+    """
+    if unit_type != "entry":
+        return {"status": "skipped", "reason": "unsupported_unit_type"}
+
+    engine = _get_sync_engine()
+    try:
+        target_chunk_tags: list[str] | None = None
+        chunk_ids_to_sync: list[str] = []
+        kb_id: uuid.UUID | None = None
+        with Session(engine) as session:
+            entry = session.get(KnowledgeEntry, uuid.UUID(unit_id))
+            if entry is None:
+                return {"status": "error", "message": "entry not found"}
+            kb_id = entry.knowledge_base_id
+
+            user_tags = list(entry.tags or [])
+            auto_tags_list = [
+                t.get("tag") for t in (entry.auto_tags or [])
+                if isinstance(t, dict) and isinstance(t.get("tag"), str)
+            ]
+            seen: set[str] = set()
+            merged: list[str] = []
+            for t in [*user_tags, *auto_tags_list]:
+                if isinstance(t, str) and t and t not in seen:
+                    seen.add(t)
+                    merged.append(t[:64])
+            target_chunk_tags = merged or None
+
+            chunks = session.execute(
+                select(Chunk).where(
+                    Chunk.unit_type == "entry",
+                    Chunk.unit_id == entry.id,
+                )
+            ).scalars().all()
+            for c in chunks:
+                c.chunk_tags = target_chunk_tags
+            chunk_ids_to_sync = [str(c.id) for c in chunks if c.vector_id is not None]
+            session.commit()
+
+        if chunk_ids_to_sync and kb_id is not None:
+            try:
+                from app.core.runtime_config import get_sync_runtime_config
+                from app.knowledge.milvus.service import MilvusService, kb_collection_name
+                runtime_cfg = get_sync_runtime_config()
+                milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
+                try:
+                    milvus_svc.update_chunk_tags(
+                        kb_collection_name(kb_id),
+                        {cid: (target_chunk_tags or []) for cid in chunk_ids_to_sync},
+                    )
+                finally:
+                    milvus_svc.close()
+            except Exception:
+                logger.warning(
+                    "refresh_user_tags_milvus_sync_failed",
+                    unit_id=unit_id, exc_info=True,
+                )
+        logger.info(
+            "refresh_user_tags_done",
+            unit_id=unit_id, milvus_synced=len(chunk_ids_to_sync),
+        )
+        return {
+            "status": "completed",
+            "unit_id": unit_id,
+            "milvus_synced": len(chunk_ids_to_sync),
+        }
+    finally:
+        engine.dispose()
+
+
 async def _run_extract(
     *,
     kb_id: uuid.UUID,
