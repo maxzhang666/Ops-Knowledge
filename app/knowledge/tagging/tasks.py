@@ -28,11 +28,12 @@ def _get_sync_engine():
 
 
 def _invalidate_kb_cache(kb_id: str) -> None:
-    """回填完成后强制 invalidate redis 字典缓存。"""
+    """回填完成后强制 invalidate 两层缓存（dict lookup + canonical embeddings）。"""
     try:
         import redis
         r = redis.from_url(settings.REDIS_URL)
         r.delete(f"kb_tag_dict:{kb_id}")
+        r.delete(f"kb_canonical_emb:{kb_id}")
     except Exception:
         logger.warning("tag_dict_cache_invalidate_failed", kb_id=kb_id, exc_info=True)
 

@@ -72,6 +72,66 @@ _OUTPUT_FIELDS = [
     "level", "title", "metadata_json", "chunk_tags",
 ]
 
+# Spec 25 §5.3 — L4 rerank: query 与 canonical embedding 取 top-K 作为
+# "本次 query 的语义相关 tag 集合"，与 chunk_tags 求交集贡献 boost。
+_DEFAULT_TOP_K_CANONICALS = 5
+
+
+def _cosine_sim(a: list[float] | None, b: list[float] | None) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _select_relevant_canonicals(
+    query_vector: list[float],
+    canonical_embeddings: dict[str, list[float]],
+    top_k: int = _DEFAULT_TOP_K_CANONICALS,
+) -> set[str]:
+    """对 query 与每个 canonical 算 cosine，取 top-K（且相似度 > 0）。"""
+    if not canonical_embeddings or not query_vector:
+        return set()
+    scored = [
+        (canon, _cosine_sim(query_vector, vec))
+        for canon, vec in canonical_embeddings.items()
+    ]
+    scored.sort(key=lambda kv: kv[1], reverse=True)
+    return {c for c, s in scored[:top_k] if s > 0}
+
+
+def _apply_tag_boost(
+    merged: dict[str, dict],
+    query_vector: list[float],
+    canonical_embeddings: dict[str, list[float]] | None,
+    boost_weight: float,
+) -> None:
+    """在 RRF 融合 score 之上叠加 tag boost；in-place 修改 row['fused']。
+
+    boost = hit_count * boost_weight，hit_count = chunk_tags ∩ top-K canonicals。
+    无 canonical embeddings / boost_weight<=0 时 noop（feature flag）。
+    """
+    if not canonical_embeddings or boost_weight <= 0:
+        return
+    relevant = _select_relevant_canonicals(query_vector, canonical_embeddings)
+    if not relevant:
+        return
+    for row in merged.values():
+        entity = row.get("entity") or {}
+        chunk_tags = entity.get("chunk_tags") or []
+        if not isinstance(chunk_tags, (list, tuple)):
+            continue
+        hit_count = sum(1 for t in chunk_tags if t in relevant)
+        if hit_count <= 0:
+            continue
+        row["fused"] = float(row.get("fused", 0.0)) + hit_count * boost_weight
+        row["tag_boost"] = hit_count * boost_weight
+
 
 def _build_tag_filter_expr(tag_filter: dict | None) -> str | None:
     """Spec 25 L2 — 把 {any_of, all_of, not} 翻译成 milvus filter 表达式。
@@ -117,6 +177,10 @@ class HybridSearcher:
         bm25_weight: float = 1.0,
         vector_weight: float = 1.0,
         tag_filter: dict | None = None,
+        # Spec 25 L4 — query 与 KB canonical embeddings 算语义相关
+        # tag boost；retrieval service 端按 KB tag_settings 决定是否注入。
+        tag_boost_weight: float = 0.0,
+        canonical_embeddings: dict[str, list[float]] | None = None,
     ) -> list[SearchResult]:
         """Hybrid retrieval with per-route score breakdown.
 
@@ -193,6 +257,10 @@ class HybridSearcher:
                 score += bm25_weight * (1.0 / (_RRF_K + s_rank + 1))
             row["fused"] = score
 
+        # Spec 25 L4 — tag boost：query 与 canonical embedding 取 top-K 相关
+        # canonicals，命中 chunk_tags 的 chunk 在 fused 之上加权
+        _apply_tag_boost(merged, query_vector, canonical_embeddings, tag_boost_weight)
+
         ranked = sorted(merged.items(), key=lambda kv: kv[1]["fused"], reverse=True)[:top_k]
 
         results: list[SearchResult] = []
@@ -222,9 +290,16 @@ class HybridSearcher:
         bm25_weight: float = 1.0,
         vector_weight: float = 1.0,
         tag_filter: dict | None = None,
+        tag_boost_weight: float = 0.0,
+        canonical_embeddings_by_kb: dict[str, dict[str, list[float]]] | None = None,
     ) -> list[SearchResult]:
         async def _search_one(cfg: dict) -> list[SearchResult]:
             loop = asyncio.get_event_loop()
+            # 每 KB 自己的 canonical embeddings（不同 KB 字典不同）
+            kb_canon = (
+                (canonical_embeddings_by_kb or {}).get(cfg.get("kb_id") or "")
+                if canonical_embeddings_by_kb else None
+            )
             hits = await loop.run_in_executor(
                 None,
                 lambda: self.search(
@@ -236,6 +311,8 @@ class HybridSearcher:
                     bm25_weight,
                     vector_weight,
                     tag_filter,
+                    tag_boost_weight,
+                    kb_canon,
                 ),
             )
             for h in hits:

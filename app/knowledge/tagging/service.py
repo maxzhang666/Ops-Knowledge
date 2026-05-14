@@ -13,8 +13,17 @@ import structlog
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.knowledge.tagging.canonical_cache import (
+    invalidate_canonical_embeddings,
+)
 from app.knowledge.tagging.models import TagDictionary, TagDictionaryAudit
 from app.knowledge.tagging.normalizer import invalidate_kb_dict_cache
+
+
+def _invalidate_all(kb_id) -> None:
+    """字典写操作后清两层缓存：lookup map + canonical embedding cache。"""
+    invalidate_kb_dict_cache(kb_id)
+    invalidate_canonical_embeddings(kb_id)
 
 logger = structlog.get_logger(__name__)
 
@@ -83,7 +92,7 @@ class TagDictionaryService:
             after={"canonical": row.canonical, "aliases": row.aliases},
             actor_id=actor_id,
         )
-        invalidate_kb_dict_cache(kb_id)
+        _invalidate_all(kb_id)
         return row
 
     async def set_aliases(
@@ -103,7 +112,7 @@ class TagDictionaryService:
             before=before, after={"aliases": row.aliases},
             actor_id=actor_id,
         )
-        invalidate_kb_dict_cache(row.kb_id)
+        _invalidate_all(row.kb_id)
         return row
 
     async def rename(
@@ -134,7 +143,7 @@ class TagDictionaryService:
             after={"canonical": new, "aliases": aliases},
             actor_id=actor_id,
         )
-        invalidate_kb_dict_cache(row.kb_id)
+        _invalidate_all(row.kb_id)
         return row, old
 
     async def merge(
@@ -189,7 +198,7 @@ class TagDictionaryService:
             },
             actor_id=actor_id,
         )
-        invalidate_kb_dict_cache(target.kb_id)
+        _invalidate_all(target.kb_id)
         return target, source_canonicals
 
     async def soft_delete(
@@ -210,7 +219,7 @@ class TagDictionaryService:
             before=before, after={"is_deprecated": True},
             actor_id=actor_id,
         )
-        invalidate_kb_dict_cache(row.kb_id)
+        _invalidate_all(row.kb_id)
         return row
 
     # ── 审计 ─────────────────────────────────────────────────────

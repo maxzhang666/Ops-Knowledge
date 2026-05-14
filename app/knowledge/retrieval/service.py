@@ -119,12 +119,40 @@ class RetrievalService:
 
         # 3. Multi-KB search
         kb_configs = [{"collection_name": kb_collection_name(kb_id), "kb_id": kb_id} for kb_id in kb_ids]
+
+        # Spec 25 L4 — 按 KB tag_settings 决定每 KB 的 boost_weight + canonical embeddings；
+        # 任一 KB 不可用直接 noop（无 settings / disabled / 字典为空 / embed 失败均退化为不 boost）
+        max_boost_weight = 0.0
+        canonical_embeddings_by_kb: dict[str, dict[str, list[float]]] = {}
+        try:
+            from app.knowledge.tagging.canonical_cache import (
+                get_kb_canonical_embeddings,
+            )
+            from app.knowledge.tagging.models import KBTagSettings
+            async with async_session() as boost_session:
+                boost_model_svc = ModelService(boost_session)
+                for kb_id_str in kb_ids:
+                    row = await boost_session.get(KBTagSettings, uuid.UUID(kb_id_str))
+                    if row is None or row.tag_boost_weight <= 0:
+                        continue
+                    emb = await get_kb_canonical_embeddings(
+                        boost_session, uuid.UUID(kb_id_str), boost_model_svc,
+                    )
+                    if emb:
+                        canonical_embeddings_by_kb[kb_id_str] = emb
+                        if row.tag_boost_weight > max_boost_weight:
+                            max_boost_weight = row.tag_boost_weight
+        except Exception:
+            logger.warning("tag_boost_setup_failed", exc_info=True)
+
         try:
             results = await self._searcher.multi_kb_search(
                 kb_configs, query_vector, query_used,
                 top_k=top_k, folder_ids=folder_ids,
                 bm25_weight=bm25_weight, vector_weight=vector_weight,
                 tag_filter=tag_filter,
+                tag_boost_weight=max_boost_weight,
+                canonical_embeddings_by_kb=canonical_embeddings_by_kb,
             )
         finally:
             try:
