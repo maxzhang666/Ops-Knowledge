@@ -34,19 +34,23 @@ async def _purge_milvus_for_entries(
     kb_id: uuid.UUID,
     entry_ids: list[uuid.UUID],
 ) -> None:
-    """Best-effort 清理 milvus 中 entry 对应的旧向量（编辑/删除时调）。
+    """清理 milvus 中 entry 对应的旧向量（编辑/删除时调）。
 
-    不清理会导致：embedding 用 chunk.id 作为 milvus PK upsert，编辑后旧
-    chunk_id 在 PG 已被删但 milvus 仍残留 → searcher 直接读 milvus entity.content
-    返回老内容。
+    Milvus 不清理会导致 stale results：embedding 用 chunk.id 作 milvus PK
+    upsert，编辑后旧 chunk_id 在 PG 已删但 milvus 仍残留 → searcher 直接读
+    milvus entity.content 返回老内容（曾在 Spec 25 调试时复现过）。
+
+    可靠性策略（#2 修复）：MilvusService.delete_by_filter 内置 3 次指数退避；
+    最终仍失败 → 抛 HTTPException(503) 阻塞 PG update / delete 路径，避免
+    产生 "PG 新 / Milvus 旧" 的脏数据组合。用户重试即可。
 
     Milvus collection schema 字段名留作 legacy 仍叫 'document_id'，但里面存
     的是 unit_id 值（与 file 路径完全对齐）。"""
     if not entry_ids:
         return
+    cfg = await get_runtime_config(db)
+    collection = kb_collection_name(kb_id)
     try:
-        cfg = await get_runtime_config(db)
-        collection = kb_collection_name(kb_id)
         milvus = MilvusService(runtime_cfg=cfg)
         try:
             if milvus.collection_exists(collection):
@@ -56,12 +60,18 @@ async def _purge_milvus_for_entries(
                     )
         finally:
             milvus.close()
-    except Exception:
-        # best-effort —— 残留只是有"幽灵向量"，下次 reindex 可清；
-        # 不能因为 milvus 不可用阻塞 PG 主路径
-        logger.warning(
+    except Exception as exc:
+        logger.error(
             "entry.milvus_purge_failed",
             kb_id=str(kb_id), count=len(entry_ids), exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "向量库（Milvus）暂时不可用，已重试 3 次仍失败；"
+                "为避免产生不一致数据，本次更新已阻止。请稍后重试。"
+                f" 错误: {str(exc)[:200]}"
+            ),
         )
 
 

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Body, Depends, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -403,7 +403,7 @@ async def batch_delete_documents(
         )
     )
 
-    # 2. Delete vectors from Milvus
+    # 2. Delete vectors from Milvus —— retry 内置；最终失败抛 503 阻塞批量删除
     cfg = await get_runtime_config(db)
     collection_name = kb_collection_name(kb_id)
     try:
@@ -412,8 +412,11 @@ async def batch_delete_documents(
             for did in doc_ids:
                 milvus.delete_by_filter(collection_name, f'document_id == "{did}"')
         milvus.close()
-    except Exception:
-        pass  # best-effort vector cleanup
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"向量库暂时不可用，重试 3 次后失败；请稍后再试。 {str(exc)[:200]}",
+        )
 
     # 3. Delete files from MinIO
     minio = MinIOService(cfg)
@@ -472,7 +475,7 @@ async def delete_document(
         Chunk.unit_type == "document", Chunk.unit_id == doc_id,
     ))
 
-    # 2. Delete vectors from Milvus (best-effort)
+    # 2. Delete vectors from Milvus —— retry 内置；失败抛 503 阻塞单文档删除
     cfg = await get_runtime_config(db)
     collection_name = kb_collection_name(kb_id)
     try:
@@ -480,8 +483,11 @@ async def delete_document(
         if milvus.collection_exists(collection_name):
             milvus.delete_by_filter(collection_name, f'document_id == "{doc_id}"')
         milvus.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"向量库暂时不可用，重试 3 次后失败；请稍后再试。 {str(exc)[:200]}",
+        )
 
     # 3. Delete file from MinIO (best-effort)
     if doc.file_path:

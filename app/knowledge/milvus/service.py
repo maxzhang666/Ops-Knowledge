@@ -117,13 +117,43 @@ class MilvusService:
         logger.info("milvus_upsert", collection=collection_name, count=len(data))
         return result
 
+    def _retry_with_backoff(self, fn, *, op: str, attempts: int = 3, base_delay: float = 0.4):
+        """指数退避 retry —— 用于幂等 Milvus 写操作（delete / upsert / partial sync）。
+
+        最终失败抛最后一次异常；调用方决定是否阻断业务路径 (HTTP 503) 还是
+        best-effort warning。这里只负责"暂时性故障自愈"，不做异常吞掉。
+        """
+        import time
+        last_exc: Exception | None = None
+        for i in range(attempts):
+            try:
+                return fn()
+            except Exception as e:
+                last_exc = e
+                if i < attempts - 1:
+                    delay = base_delay * (2 ** i)
+                    logger.warning(
+                        "milvus_op_retry", op=op, attempt=i + 1, delay=delay,
+                        error=str(e)[:200],
+                    )
+                    time.sleep(delay)
+        assert last_exc is not None
+        logger.error("milvus_op_failed", op=op, attempts=attempts, error=str(last_exc)[:200])
+        raise last_exc
+
     def delete_by_ids(self, collection_name: str, ids: list[str]) -> dict:
-        result = self._client.delete(collection_name=collection_name, ids=ids)
+        result = self._retry_with_backoff(
+            lambda: self._client.delete(collection_name=collection_name, ids=ids),
+            op="delete_by_ids",
+        )
         logger.info("milvus_delete_by_ids", collection=collection_name, count=len(ids))
         return result
 
     def delete_by_filter(self, collection_name: str, filter_expr: str) -> dict:
-        result = self._client.delete(collection_name=collection_name, filter=filter_expr)
+        result = self._retry_with_backoff(
+            lambda: self._client.delete(collection_name=collection_name, filter=filter_expr),
+            op="delete_by_filter",
+        )
         logger.info("milvus_delete_by_filter", collection=collection_name, filter=filter_expr)
         return result
 
