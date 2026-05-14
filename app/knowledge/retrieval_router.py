@@ -74,6 +74,8 @@ class RetrievalTestRequest(BaseModel):
     embedding_registry_id: uuid.UUID | None = None  # override KB embedding
     # Spec 25 L2 — chunk_tags 过滤；{any_of, all_of, not} 任意组合，AND 串联
     tag_filter: dict | None = None
+    # Spec 25 L5 — 是否启用 LLM 路由（KB.tag_routing_enabled=true 时才会真正生效）
+    enable_tag_routing: bool = True
 
 
 class RetrievalTestResultItem(BaseModel):
@@ -98,6 +100,8 @@ class RetrievalTestResponse(BaseModel):
     total: int
     results: list[RetrievalTestResultItem]
     indexed: bool  # whether the KB has any indexed chunks (Milvus collection exists with data)
+    # Spec 25 L5 — LLM 路由推断出的 canonical（前端 chip 展示让用户可知 + 可禁用）
+    routed_tags: list[str] = []
 
 
 @router.post("/test", response_model=RetrievalTestResponse)
@@ -141,6 +145,7 @@ async def retrieval_test(
         # Workbench 检索测试：不算真实使用，跳过治理事件 + retrieval_logs.is_test=True
         "is_test": True,
         "tag_filter": body.tag_filter,
+        "enable_tag_routing": body.enable_tag_routing,
     }
     if rerank_on:
         # M6.8 — 临时覆盖优先级：body.rerank_registry_id > KB 默认（provider+model_name）
@@ -174,6 +179,7 @@ async def retrieval_test(
         total=len(result.results),
         results=[RetrievalTestResultItem(**asdict(r)) for r in result.results],
         indexed=(kb.chunk_count or 0) > 0,
+        routed_tags=result.routed_tags,
     )
 
 

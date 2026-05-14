@@ -132,6 +132,8 @@ export interface RetrievalTestResponse {
   total: number
   results: RetrievalResult[]
   indexed: boolean
+  /** Spec 25 L5 — LLM 路由推断出的 canonical 列表（chip 展示让用户可视化 + 可禁用） */
+  routed_tags: string[]
 }
 
 // Workbench history feed
@@ -283,6 +285,8 @@ interface TestRetrievalPayload {
   embedding_registry_id?: string
   // Spec 25 L2 — chunk_tags 过滤；三键任意组合 AND 串联
   tag_filter?: TagFilter
+  // Spec 25 L5 — 是否启用 LLM query routing；最终生效仍需 KB.tag_routing_enabled=true
+  enable_tag_routing?: boolean
 }
 
 export interface ListRetrievalLogsParams {

@@ -23,6 +23,9 @@ class RetrievalResult:
     query_used: str = ""
     timing_ms: int = 0
     total_searched: int = 0
+    # Spec 25 L5 — LLM 路由推断出的 canonical 列表（用户在前端可见，
+    # 下次查询可 toggle 禁用）。empty = 未启用 / 未推断出任何 tag
+    routed_tags: list[str] = field(default_factory=list)
 
 
 class RetrievalService:
@@ -58,6 +61,9 @@ class RetrievalService:
         is_test: bool = False,
         # Spec 25 L2 — tag pre-filter；{any_of, all_of, not} 三键任组合
         tag_filter: dict | None = None,
+        # Spec 25 L5 — 启用 LLM query routing（默认 True，但最终生效仍需
+        # KB tag_settings.tag_routing_enabled=True 且用户未传 tag_filter.any_of）
+        enable_tag_routing: bool = True,
     ) -> RetrievalResult:
         t0 = time.monotonic()
         query_used = query
@@ -119,6 +125,37 @@ class RetrievalService:
 
         # 3. Multi-KB search
         kb_configs = [{"collection_name": kb_collection_name(kb_id), "kb_id": kb_id} for kb_id in kb_ids]
+
+        # Spec 25 L5 — LLM Query Routing：仅单 KB + 用户未显式传 tag_filter.any_of 时启用。
+        # 多 KB 时跳过（字典跨 KB 不互通，路由结果难合并）。失败完全静默。
+        routed_tags: list[str] = []
+        user_provided_any_of = bool(
+            isinstance(tag_filter, dict) and tag_filter.get("any_of")
+        )
+        if (
+            enable_tag_routing
+            and not user_provided_any_of
+            and len(kb_ids) == 1
+        ):
+            try:
+                from app.knowledge.tagging.query_router import route_query_to_tags
+                async with async_session() as routing_session:
+                    routing_model_svc = ModelService(routing_session)
+                    routed_tags = await route_query_to_tags(
+                        routing_session, uuid.UUID(kb_ids[0]),
+                        query_used, routing_model_svc,
+                    )
+                if routed_tags:
+                    # 注入 tag_filter.any_of —— 不动用户已设的 all_of / not
+                    if not isinstance(tag_filter, dict):
+                        tag_filter = {}
+                    tag_filter = {**tag_filter, "any_of": routed_tags}
+                    logger.info(
+                        "tag_routing_applied",
+                        kb_id=kb_ids[0], routed=routed_tags,
+                    )
+            except Exception:
+                logger.warning("tag_routing_failed", exc_info=True)
 
         # Spec 25 L4 — 按 KB tag_settings 决定每 KB 的 boost_weight + canonical embeddings；
         # 任一 KB 不可用直接 noop（无 settings / disabled / 字典为空 / embed 失败均退化为不 boost）
@@ -314,6 +351,7 @@ class RetrievalService:
             query_used=query_used,
             timing_ms=elapsed,
             total_searched=total_searched,
+            routed_tags=routed_tags,
         )
 
     async def retrieve_agentic(

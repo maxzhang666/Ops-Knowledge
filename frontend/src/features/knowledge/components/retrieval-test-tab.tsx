@@ -38,6 +38,8 @@ interface SearchParams {
   tag_any_of: string[]
   tag_all_of: string[]
   tag_not: string[]
+  // Spec 25 L5 — 启用 LLM query routing（最终生效需 KB.tag_routing_enabled=true）
+  enable_tag_routing: boolean
 }
 
 const DEFAULT_PARAMS: SearchParams = {
@@ -51,6 +53,7 @@ const DEFAULT_PARAMS: SearchParams = {
   tag_any_of: [],
   tag_all_of: [],
   tag_not: [],
+  enable_tag_routing: true,
 }
 
 interface RecommendationPayload {
@@ -95,6 +98,8 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
   const [results, setResults] = useState<RetrievalResult[]>([])
   const [queryUsed, setQueryUsed] = useState<string>("")
   const [timingMs, setTimingMs] = useState<number | null>(null)
+  // Spec 25 L5 — LLM 路由推断出的 canonical（chip 展示）
+  const [routedTags, setRoutedTags] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [tested, setTested] = useState(false)
 
@@ -386,10 +391,12 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
             : undefined,
         embedding_registry_id: params.embedding_registry_id || undefined,
         tag_filter: tagFilter,
+        enable_tag_routing: params.enable_tag_routing,
       })
       setResults(res.results)
       setQueryUsed(res.query_used)
       setTimingMs(res.timing_ms)
+      setRoutedTags(res.routed_tags ?? [])
       setTested(true)
       setActiveLogId(null)  // current is fresh, not a replay
       reloadHistory()
@@ -442,6 +449,7 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
         tag_any_of: Array.isArray(tf.any_of) ? (tf.any_of as string[]) : [],
         tag_all_of: Array.isArray(tf.all_of) ? (tf.all_of as string[]) : [],
         tag_not: Array.isArray(tf.not) ? (tf.not as string[]) : [],
+        enable_tag_routing: (p.enable_tag_routing as boolean | undefined) ?? true,
       })
     }
     // Pull the snapshot of the hit list captured at retrieval time, NOT
@@ -596,6 +604,19 @@ function SearchWorkbench({ kbId, kbIndexed }: { kbId: string; kbIndexed: boolean
               <>
                 <span>·</span>
                 <span>实际查询: <span className="font-mono">{queryUsed}</span></span>
+              </>
+            )}
+            {routedTags.length > 0 && (
+              <>
+                <span>·</span>
+                <span title="Spec 25 L5 — LLM 推断的相关标签，已加入 any_of 过滤">
+                  自动路由：
+                  {routedTags.map((t) => (
+                    <Tag key={t} size="small" color="cyan" style={{ marginLeft: 4 }}>
+                      {t}
+                    </Tag>
+                  ))}
+                </span>
               </>
             )}
             {results.length > 0 && (
@@ -1275,6 +1296,19 @@ function ParamsPanel({
                 <Select.Option key={`not-${t}`} value={t}>{t}</Select.Option>
               ))}
             </Select>
+          </Field>
+        </div>
+        <div className="mt-3 border-t border-dashed pt-3">
+          <Field
+            label="智能路由（LLM）"
+            tip="Spec 25 L5 — 检索前调小模型从 query 中推断相关 canonical 标签，自动加入 any_of 过滤。需要 KB 配置开启 tag_routing_enabled；用户已手动选 any_of 时本次跳过路由（手动优先）"
+          >
+            <div className="flex h-8 items-center">
+              <Switch
+                checked={value.enable_tag_routing}
+                onChange={(v) => update("enable_tag_routing", v)}
+              />
+            </div>
           </Field>
         </div>
       </ModuleBox>
