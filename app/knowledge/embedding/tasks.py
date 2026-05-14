@@ -150,7 +150,8 @@ def embed_unit_chunks(self, unit_type: str, unit_id: str, kb_id: str) -> dict:
                     "position": c.position,
                     "title": unit_title,
                     "metadata": c.metadata_,
-                    # Spec 25 L1 — chunk_tags 注入 embedding 输入文本
+                    # chunk_tags 仍写入 Milvus array column 供 L2/L4/L5 用；
+                    # 但**不进** embedding 输入文本（见 _build_embedding_text 注释）
                     "chunk_tags": list(c.chunk_tags or []),
                 }
                 for c in chunks
@@ -217,8 +218,8 @@ def embed_unit_chunks(self, unit_type: str, unit_id: str, kb_id: str) -> dict:
         logger.info("embed_unit_done", unit_type=unit_type, unit_id=unit_id, count=len(vector_ids))
 
         # Spec 25 Plan B — entry 类型 embed 完成后链式触发 auto_tags 提取。
-        # 提取 task 内部对比 auto_tag set，若变化才重置 vector_id + 触发二次 embed；
-        # 第二次 embed 完成又链式 extract，set 相等 → 停止（最多 2 次 embed）。
+        # 提取 task 仅写 entry.auto_tags + chunks.chunk_tags（供 L2/L4/L5 用），
+        # **不再 reset vector_id / 不触发二次 embed**（2026-05-14 §5.1 L1 局部回退）。
         if unit_type == "entry":
             try:
                 from app.core.tasks import safe_delay
@@ -369,7 +370,7 @@ def reindex_kb(self, kb_id: str) -> dict:
                     "position": c.position,
                     "title": _title_for(c),
                     "metadata": c.metadata_,
-                    # Spec 25 L1 — reindex 时同样注入 chunk_tags
+                    # chunk_tags 写入 Milvus 供 retrieval；不进 embedding 输入文本
                     "chunk_tags": list(c.chunk_tags or []),
                 }
                 for c in chunks

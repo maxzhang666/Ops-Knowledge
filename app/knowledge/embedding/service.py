@@ -18,34 +18,19 @@ logger = structlog.get_logger(__name__)
 _CONTEXT_PREFIX_CHAR_THRESHOLD = 100
 
 
-_MAX_TAGS_IN_PREFIX = 10
-_MAX_TAG_PREFIX_CHARS = 200
-
-
 def _build_embedding_text(chunk: dict, threshold: int = _CONTEXT_PREFIX_CHAR_THRESHOLD) -> str:
     """Compose the string actually sent to the embedding model.
 
-    Spec 25 L1：在原有 heading prefix 基础上叠加 tags prefix，结构化为
-    `[TAGS] ... [TITLE] ... [CONTENT] ...`，配合 instruct-style embedding
-    模型（bge-m3 等）让向量空间编码主题信号。Milvus 中存的 content 字段保持
-    原文（searcher 展示用），仅 embedding 输入文本变化。
-
-    顺序：
-      1. 若有 chunk_tags → 拼 [TAGS]
-      2. 若短 chunk + heading → 拼 [TITLE] heading
-      3. 总是带 [CONTENT] content（标记块边界，便于模型分辨）
-
-    无 tags 且无 heading 时退化为原 content（避免 [CONTENT] 标签污染常规
-    长 chunk 的 embedding 形态）。
+    标签**不进** embedding 输入（2026-05-14 决策，Spec 25 §5.1 L1 局部回退）：
+    原设计在文本前拼 `[TAGS] ...`，导致标签变化必须重 embed，引入死循环风险、
+    status 失真、二次成本。新设计：标签仅透过 `chunks.chunk_tags` 字段参与
+    L2 filter / L4 boost / L5 routing，不影响向量本身。embedding 输入仅做
+    M6.7 heading prefix 处理（短 chunk + heading → 章节标题前置上下文），与
+    标签无关。
     """
     content = chunk.get("content", "") or ""
-    tags = chunk.get("chunk_tags") or []
-    if isinstance(tags, (list, tuple)):
-        tag_list = [str(t).strip() for t in tags[:_MAX_TAGS_IN_PREFIX] if t]
-    else:
-        tag_list = []
 
-    # 1. heading prefix（M6.7 行为保留）
+    # M6.7 — 短 chunk contextual prefix：仅当 heading 存在 + content 短 + 不重复
     heading = ""
     metadata = chunk.get("metadata") or {}
     if isinstance(metadata, dict):
@@ -54,19 +39,9 @@ def _build_embedding_text(chunk: dict, threshold: int = _CONTEXT_PREFIX_CHAR_THR
         bool(heading) and threshold > 0 and len(content) < threshold
         and f"{heading}\n\n" not in content
     )
-
-    # 2. 无 tags 且无 heading → 完全保留原始 content（M6.6 默认行为）
-    if not tag_list and not use_heading:
+    if not use_heading:
         return content
-
-    parts: list[str] = []
-    if tag_list:
-        tag_str = ", ".join(tag_list)[:_MAX_TAG_PREFIX_CHARS]
-        parts.append(f"[TAGS] {tag_str}")
-    if use_heading:
-        parts.append(f"[TITLE] {heading}")
-    parts.append(f"[CONTENT] {content}")
-    return "\n".join(parts)
+    return f"{heading}\n\n{content}"
 
 
 class EmbeddingService:

@@ -75,35 +75,34 @@ def test_embed_text_long_no_signals_returns_content():
     assert _build_embedding_text({"content": long_content}) == long_content
 
 
-def test_embed_text_with_tags_uses_structured_prefix():
-    """有 tags 即触发结构化前缀（不论长短）。"""
+def test_embed_text_ignores_tags():
+    """2026-05-14 回退：tags **不再**进 embedding 输入文本。"""
     result = _build_embedding_text({
         "content": "短内容", "chunk_tags": ["退款", "售后"],
     })
-    assert result.startswith("[TAGS] ")
-    assert "退款, 售后" in result
-    assert "[CONTENT] 短内容" in result
+    # 无 [TAGS] prefix；纯原文回退
+    assert result == "短内容"
+    assert "[TAGS]" not in result
 
 
 def test_embed_text_with_heading_short_chunk():
-    """短 chunk + heading → [TITLE] + [CONTENT]，行为对齐 M6.7。"""
+    """短 chunk + heading → heading\\n\\ncontent（M6.7 行为保留）。"""
     result = _build_embedding_text({
         "content": "短内容",
         "metadata": {"heading": "# 退款流程"},
     })
-    assert "[TITLE] # 退款流程" in result
-    assert "[CONTENT] 短内容" in result
+    assert result == "# 退款流程\n\n短内容"
 
 
-def test_embed_text_caps_tag_count():
-    """超过 _MAX_TAGS_IN_PREFIX(=10) 的 tags 被截断。"""
-    tags = [f"t{i}" for i in range(20)]
-    result = _build_embedding_text({"content": "x", "chunk_tags": tags})
-    # 只前 10 个出现
-    for i in range(10):
-        assert f"t{i}" in result
-    for i in range(15, 20):
-        assert f"t{i}" not in result
+def test_embed_text_tags_with_heading_only_heading_takes_effect():
+    """同时给 tags + heading：仅 heading 生效，tags 被忽略。"""
+    result = _build_embedding_text({
+        "content": "短",
+        "chunk_tags": ["退款"],
+        "metadata": {"heading": "## 标题"},
+    })
+    assert result == "## 标题\n\n短"
+    assert "[TAGS]" not in result
 
 
 # ── _compute_chunk_tags_from_unit ────────────────────────────────

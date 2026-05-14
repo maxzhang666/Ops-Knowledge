@@ -127,6 +127,55 @@ class MilvusService:
         logger.info("milvus_delete_by_filter", collection=collection_name, filter=filter_expr)
         return result
 
+    def update_chunk_tags(
+        self, collection_name: str, id_to_tags: dict[str, list[str]],
+    ) -> int:
+        """Partial update Milvus rows' chunk_tags 字段（保留 vector 与其他字段）。
+
+        Milvus 没有 partial update：必须 query 出现有完整行 → 改 chunk_tags →
+        upsert 回去。专为 auto_tag 提取后同步标签设计（标签不进 embedding，但
+        L2/L4/L5 都读 Milvus 的 chunk_tags array column）。
+
+        Args:
+            id_to_tags: {chunk_id: new_chunk_tags_list}
+
+        Returns:
+            实际更新的行数（query 命中数；缺失的 chunk_id 静默跳过）
+        """
+        if not id_to_tags:
+            return 0
+        ids = list(id_to_tags.keys())
+        # Milvus filter IN expression
+        id_list_expr = ", ".join(f'"{i}"' for i in ids)
+        filter_expr = f"id in [{id_list_expr}]"
+        rows = self._client.query(
+            collection_name=collection_name,
+            filter=filter_expr,
+            # Pull all schema fields needed for full upsert
+            output_fields=[
+                "id", "dense_vector", "content", "document_id",
+                "folder_id", "level", "position", "title",
+                "metadata_json", "chunk_tags",
+            ],
+        )
+        if not rows:
+            logger.warning(
+                "milvus_update_chunk_tags_no_match",
+                collection=collection_name, requested=len(ids),
+            )
+            return 0
+        for r in rows:
+            chunk_id = str(r["id"])
+            new_tags = id_to_tags.get(chunk_id, [])
+            # 与 embed_and_store 一致的归一化策略
+            r["chunk_tags"] = [str(t)[:64] for t in (new_tags or []) if t][:20]
+        self._client.upsert(collection_name=collection_name, data=rows)
+        logger.info(
+            "milvus_update_chunk_tags",
+            collection=collection_name, updated=len(rows), requested=len(ids),
+        )
+        return len(rows)
+
     # ── Stats ────────────────────────────────────────────────────
 
     def get_collection_stats(self, collection_name: str) -> dict:

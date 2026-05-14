@@ -1,11 +1,12 @@
 """Spec 25 Plan B — 自动标签提取 celery 任务。
 
-触发链：
+触发链（2026-05-14 简化后）：
   entry create/edit → embed_unit_chunks → (chain) extract_auto_tags
-  extract → 若 auto_tags 集合变化 → reset vector_id + enqueue 一次 embed
-  第二次 embed → (chain) extract → 集合相等 → 停止
+  extract → 写 entry.auto_tags + chunks.chunk_tags → 结束
 
-死循环防御：extract 内对比新旧 auto_tags 的 set，仅集合变化时 reset embed。
+历史变更：原设计在 extract 后比较新旧 auto_tag set，变化则 reset chunks.vector_id
+并触发二次 embed（Spec 25 §5.1 L1 prefix 注入要求）。该路径已删除——标签不再进
+embedding 输入，仅经 chunk_tags 字段参与 L2 filter / L4 boost / L5 routing。
 """
 from __future__ import annotations
 
@@ -108,6 +109,7 @@ def extract_auto_tags(self, unit_type: str, unit_id: str) -> dict:
         changed = old_auto_tag_set != new_auto_tag_set
 
         # ── PG sync write —— auto_tags + chunks.chunk_tags 重写 ───
+        synced_milvus_chunk_ids: list[str] = []
         with Session(engine) as session:
             entry = session.get(KnowledgeEntry, uuid.UUID(unit_id))
             if entry is None:
@@ -134,14 +136,41 @@ def extract_auto_tags(self, unit_type: str, unit_id: str) -> dict:
             for c in chunks:
                 c.chunk_tags = new_chunk_tags
 
-            # 集合变化 → reset vector_id 触发 embed re-run；
-            # 二次 embed 完成的 chain 调 extract 会发现集合相等，停止。
-            if changed and chunks:
-                for c in chunks:
-                    c.vector_id = None
-
             session.commit()
             chunk_count = len(chunks)
+            # 收集 Milvus 待同步 chunk ids（仅已 embed 过的，vector_id 非空）
+            if changed:
+                synced_milvus_chunk_ids = [
+                    str(c.id) for c in chunks if c.vector_id is not None
+                ]
+                target_chunk_tags = new_chunk_tags or []
+
+        # ── Milvus partial sync —— 仅 chunk_tags 字段，保留 vector ─
+        # 标签变化时同步 Milvus 的 chunk_tags array column；vector 不动，避免
+        # 重 embed。失败仅警告，不阻塞 PG 主路径（PG 已是 source of truth，
+        # 下次 reindex 会修复 Milvus drift）。
+        if synced_milvus_chunk_ids:
+            try:
+                from app.core.runtime_config import get_sync_runtime_config
+                from app.knowledge.milvus.service import MilvusService, kb_collection_name
+                runtime_cfg = get_sync_runtime_config()
+                milvus_svc = MilvusService(runtime_cfg=runtime_cfg)
+                try:
+                    updated = milvus_svc.update_chunk_tags(
+                        kb_collection_name(kb.id),
+                        {cid: target_chunk_tags for cid in synced_milvus_chunk_ids},
+                    )
+                    logger.info(
+                        "auto_tags_milvus_synced",
+                        unit_id=unit_id, requested=len(synced_milvus_chunk_ids),
+                        updated=updated,
+                    )
+                finally:
+                    milvus_svc.close()
+            except Exception:
+                logger.warning(
+                    "auto_tags_milvus_sync_failed", unit_id=unit_id, exc_info=True,
+                )
 
         logger.info(
             "auto_tags_extracted",
@@ -150,30 +179,12 @@ def extract_auto_tags(self, unit_type: str, unit_id: str) -> dict:
             chunk_count=chunk_count,
         )
 
-        # ── changed 时触发二次 embed ──────────────────────────────
-        if changed and chunk_count > 0:
-            try:
-                from app.core.tasks import safe_delay
-                from app.knowledge.embedding.tasks import embed_unit_chunks
-                safe_delay(
-                    embed_unit_chunks, "entry", unit_id, str(kb.id),
-                )
-                logger.info(
-                    "auto_tags_triggered_reembed",
-                    unit_id=unit_id, reason="auto_tag_set_changed",
-                )
-            except Exception:
-                logger.warning(
-                    "auto_tags_reembed_enqueue_failed",
-                    unit_id=unit_id, exc_info=True,
-                )
-
         return {
             "status": "completed",
             "unit_id": unit_id,
             "new_tags": len(result["auto_tags"]),
             "changed": changed,
-            "triggered_reembed": changed and chunk_count > 0,
+            "milvus_synced": len(synced_milvus_chunk_ids),
         }
     finally:
         engine.dispose()
