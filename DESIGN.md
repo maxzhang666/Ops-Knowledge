@@ -125,11 +125,14 @@ typography:
     letterSpacing: -0.12px
 
 rounded:
+  # Ops-Knowledge override (2026-05-14): 原 Apple lg=18px / md=11px / sm=8px
+  # 在管理后台 SaaS 场景下视觉过圆，与高密度表单/卡片网格不协调。
+  # 阶梯整体收敛：lg 8px 作为 utility card 默认，pill 仅留给主 CTA。
   none: 0px
-  xs: 5px
-  sm: 8px
-  md: 11px
-  lg: 18px
+  xs: 3px
+  sm: 5px
+  md: 6px
+  lg: 8px
   pill: 9999px
   full: 9999px
 
@@ -408,15 +411,17 @@ Apple's whitespace is the product's pedestal. Every tile begins with at least 64
 
 ### Border Radius Scale
 
-| Token | Value | Use |
-|---|---|---|
-| `{rounded.none}` | 0px | Full-bleed product tiles (no corner rounding) |
-| `{rounded.xs}` | 5px | Inline links when styled as subtle chips (rare) |
-| `{rounded.sm}` | 8px | Dark utility buttons (Sign In, Bag), inline card imagery |
-| `{rounded.md}` | 11px | White Pearl Button capsules |
-| `{rounded.lg}` | 18px | Store utility cards, accessories grid cards |
-| `{rounded.pill}` | 9999px | Primary blue pill CTAs, sub-nav buy button, configurator option chips, search input — the signature Apple pill |
-| `{rounded.full}` | 9999px / 50% | Circular control chips floating over photography |
+**值为 Ops-Knowledge 项目规范**（见 frontmatter `rounded:`）；下方的叙述性段落引用 Apple 原始网站事实（lg=18px 等），与本表数值差异属预期，不互冲突。
+
+| Token | Value (Ops-Knowledge) | Apple 原值 | Use |
+|---|---|---|---|
+| `{rounded.none}` | 0px | 0px | Full-bleed product tiles (no corner rounding) |
+| `{rounded.xs}` | 3px | 5px | Inline chips (rare) |
+| `{rounded.sm}` | 5px | 8px | Dark utility buttons, inline card imagery |
+| `{rounded.md}` | 6px | 11px | Pearl Button capsules |
+| `{rounded.lg}` | 8px | 18px | **Utility cards** — 主用值，shadcn Card / Tabs 等容器默认半径 |
+| `{rounded.pill}` | 9999px | 9999px | Primary blue pill CTAs, search input — signature Apple pill |
+| `{rounded.full}` | 9999px / 50% | 同左 | Circular control chips |
 
 ### Photography Geometry
 - **Hero imagery**: full-bleed, 21:9 or taller on the homepage; 16:9 on environment and shop pages. Product renders are photographic-realistic, often shot on a tinted surface that becomes the tile background.

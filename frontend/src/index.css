@@ -51,10 +51,12 @@
     --text-base: 1.0625rem;                      /* 17px DESIGN.md body */
     --text-base--line-height: calc(1.47 / 1.0625); /* 1.47 行高（按 17px 反算） */
     --text-base--letter-spacing: -0.022em;       /* ≈ -0.374px @ 17px */
-    /* DESIGN.md 圆角阶梯（亮色生效；暗色继承 --radius，等价于按比例缩放） */
-    --radius-sm: calc(var(--radius) * 0.444);   /*  8px when radius=18 */
-    --radius-md: calc(var(--radius) * 0.611);   /* 11px */
-    --radius-lg: var(--radius);                  /* 18px */
+    /* DESIGN.md Ops-Knowledge 圆角阶梯（亮色生效；暗色继承 --radius）。
+       lg=8px (utility card 主用)；sm/md 等比缩放，与 Apple 原 18/11/8 不同
+       但更适配高密度管理后台。 */
+    --radius-sm: calc(var(--radius) * 0.6);     /* ~5px when radius=8 */
+    --radius-md: calc(var(--radius) * 0.8);     /* ~6px */
+    --radius-lg: var(--radius);                  /* 8px */
     --radius-xl: calc(var(--radius) * 1.4);
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
@@ -107,7 +109,7 @@
     --chart-3: oklch(0.74 0.16 55);
     --chart-4: oklch(0.58 0.20 300);
     --chart-5: oklch(0.58 0.20 25);
-    --radius: 1.125rem;                         /* 18px — DESIGN.md rounded.lg (utility card) */
+    --radius: 0.5rem;                           /* 8px — DESIGN.md rounded.lg (Ops-Knowledge override) */
 
     /* Sidebar 类比 DESIGN.md global-nav：保留近黑，不切 Action Blue。 */
     --sidebar: oklch(0.985 0 0);
