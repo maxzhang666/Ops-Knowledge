@@ -68,9 +68,13 @@ class KBService:
         await self.db.flush()
         await self.db.refresh(kb)  # load server-generated created_at/updated_at/counts
 
-        # Spec 25 — 默认 balanced preset 落档；后续 KB 配置可改 preset 或 custom 字段
+        # Spec 25 — 默认 balanced preset 落档；用户在创建时关闭智能标签则 enabled=false。
+        # 关闭后所有 L1/L2/L4/L5 + auto-tag pipeline 全部跳过；用户标签 normalize 仍走字典。
         from app.knowledge.tagging.kb_settings import KBTagSettingsService
-        await KBTagSettingsService(self.db).get_or_create_default(kb.id)
+        settings_row = await KBTagSettingsService(self.db).get_or_create_default(kb.id)
+        if data.enable_auto_tagging is False and settings_row.auto_tag_enabled:
+            settings_row.auto_tag_enabled = False
+            await self.db.flush()
 
         if data.share_to_dept:
             dept_svc = DepartmentService(self.db)

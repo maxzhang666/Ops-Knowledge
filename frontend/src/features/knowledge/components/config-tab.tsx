@@ -15,6 +15,13 @@ import {
 } from "@/components/ui/card"
 import { knowledgeApi, type KnowledgeBase } from "@/api/knowledge"
 import { modelApi, type RegistryEntry } from "@/api/model"
+import {
+  kbTagSettingsApi,
+  type KBTagSettings,
+  type TagPreset,
+  type UpdateKBTagSettings,
+} from "@/api/kb_tag_settings"
+import { useAuthStore } from "@/stores/auth"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 
 interface ConfigTabProps {
@@ -599,6 +606,9 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         </CardContent>
       </Card>
 
+      {/* Spec 25 §6 — 智能标签设置（admin only），含 3 档 preset + 高级展开 */}
+      <TagSettingsCard kbId={kb.id} />
+
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={(v) => { if (!deleting) setDeleteOpen(v) }}
@@ -669,3 +679,235 @@ function ReviewToggleCard({
     </Card>
   )
 }
+
+
+// ─────────────────────────────────────────────────────────────────
+// Spec 25 §6 — 智能标签设置卡（admin only）
+// 3 档 preset radio + 高级 collapsible 展开各字段；
+// 任一字段改动自动转 custom；UI 仅 system_admin 渲染。
+
+const TAG_PRESETS: { value: Exclude<TagPreset, "custom">; label: string; desc: string }[] = [
+  { value: "low_cost", label: "低成本", desc: "KeyBERT，max 3 标签，置信度阈值 0.7" },
+  { value: "balanced", label: "均衡（推荐）", desc: "Hybrid，max 5 标签，置信度 0.6" },
+  { value: "high_quality", label: "高质量", desc: "LLM，max 8 标签，置信度 0.5，启用智能路由" },
+]
+
+function TagSettingsCard({ kbId }: { kbId: string }) {
+  const role = useAuthStore((s) => s.user?.role)
+  const [data, setData] = useState<KBTagSettings | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [llmOptions, setLlmOptions] = useState<RegistryEntry[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    kbTagSettingsApi.get(kbId)
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setData(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [kbId])
+
+  useEffect(() => {
+    modelApi.listRegistry({ model_type: "llm", enabled_only: "true" })
+      .then((l) => setLlmOptions(Array.isArray(l) ? l : []))
+      .catch(() => {})
+  }, [])
+
+  // 仅 system_admin 可见，避免普通用户被复杂参数干扰
+  if (role !== "system_admin") return null
+
+  async function patch(update: UpdateKBTagSettings) {
+    setSaving(true)
+    try {
+      const next = await kbTagSettingsApi.update(kbId, update)
+      setData(next)
+      toast.success("已保存")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>智能标签设置</CardTitle></CardHeader>
+        <CardContent><p className="text-xs text-muted-foreground">加载中…</p></CardContent>
+      </Card>
+    )
+  }
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>智能标签设置</CardTitle></CardHeader>
+        <CardContent><p className="text-xs text-muted-foreground">无法加载配置，请刷新页面重试</p></CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span>智能标签设置</span>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            preset: {data.preset}
+          </span>
+        </CardTitle>
+        <CardDescription>
+          自动标签提取 + 检索增强（语义过滤 / 重排 / 智能路由）；
+          仅管理员可调整。详细统计在「治理」tab 内查看。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {/* 启用总开关 */}
+        <div className="flex items-start gap-3 rounded-md border bg-muted/20 p-3">
+          <Switch
+            checked={data.auto_tag_enabled}
+            onCheckedChange={(v) => patch({ auto_tag_enabled: v as boolean })}
+            disabled={saving}
+          />
+          <div className="flex-1">
+            <Label className="text-sm font-medium">启用自动标签提取</Label>
+            <p className="text-xs text-muted-foreground">
+              关闭后所有条目不再自动生成标签，已有 auto_tags 保留；L4 / L5 也将跳过
+            </p>
+          </div>
+        </div>
+
+        {/* preset 切换 */}
+        <div className="flex flex-col gap-2">
+          <Label>预设档</Label>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {TAG_PRESETS.map((p) => {
+              const active = data.preset === p.value
+              return (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => !saving && patch({ preset: p.value })}
+                  disabled={saving}
+                  className={
+                    "rounded-md border p-2.5 text-left transition-colors " +
+                    (active
+                      ? "border-primary bg-primary/5"
+                      : "hover:border-primary/30")
+                  }
+                >
+                  <div className="flex items-center justify-between text-sm font-medium">
+                    {p.label}
+                    {active && <Check className="size-3.5 text-primary" />}
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{p.desc}</p>
+                </button>
+              )
+            })}
+          </div>
+          {data.preset === "custom" && (
+            <p className="text-[11px] text-warning">
+              当前为 custom 模式（用户已偏离预设）；切回预设会覆盖所有自定义值
+            </p>
+          )}
+        </div>
+
+        {/* 高级展开 */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showAdvanced ? "收起高级参数 ▴" : "展开高级参数 ▾"}
+          </button>
+        </div>
+
+        {showAdvanced && (
+          <div className="grid grid-cols-1 gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs">Provider</Label>
+              <Select
+                value={data.auto_tag_provider}
+                onValueChange={(v) => v && patch({ auto_tag_provider: v as KBTagSettings["auto_tag_provider"] })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="keybert">KeyBERT（仅 embedding，无 LLM 成本）</SelectItem>
+                  <SelectItem value="llm">LLM（小模型抽取）</SelectItem>
+                  <SelectItem value="hybrid">Hybrid（KeyBERT 候选 + LLM 改写）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs">LLM 模型（auto_tag + routing 共用）</Label>
+              <Select
+                value={data.auto_tag_llm_model_id ?? "__none__"}
+                onValueChange={(v) => patch({
+                  auto_tag_llm_model_id: v === "__none__" ? null : v,
+                })}
+              >
+                <SelectTrigger><SelectValue placeholder="未配置" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">（未配置 / 跳过）</SelectItem>
+                  {llmOptions.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.display_name || m.model_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs">每条目最多标签数 ({data.auto_tag_max_per_unit})</Label>
+              <Input
+                type="number" min={1} max={20}
+                value={data.auto_tag_max_per_unit}
+                onChange={(e) => patch({ auto_tag_max_per_unit: Number(e.target.value) || 5 })}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs">置信度阈值 ({data.auto_tag_confidence_threshold.toFixed(2)})</Label>
+              <Input
+                type="number" min={0} max={1} step={0.05}
+                value={data.auto_tag_confidence_threshold}
+                onChange={(e) => patch({ auto_tag_confidence_threshold: Number(e.target.value) || 0.6 })}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={data.tag_filter_enabled}
+                onCheckedChange={(v) => patch({ tag_filter_enabled: v as boolean })}
+              />
+              <Label className="text-xs">启用 L1/L2 标签注入与过滤
+                <InfoTip text="L1: embedding 前缀注入；L2: 检索 milvus array filter。关闭后召回完全不用 tag 信号" />
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={data.tag_routing_enabled}
+                onCheckedChange={(v) => patch({ tag_routing_enabled: v as boolean })}
+              />
+              <Label className="text-xs">启用 L5 LLM 智能路由
+                <InfoTip text="检索前 LLM 推断 query 相关 canonical 自动 any_of。需要配置 LLM 模型" />
+              </Label>
+            </div>
+            <div className="col-span-1 flex flex-col gap-1 sm:col-span-2">
+              <Label className="text-xs">L4 重排 boost 权重 ({data.tag_boost_weight.toFixed(3)})</Label>
+              <Input
+                type="number" min={0} max={1} step={0.01}
+                value={data.tag_boost_weight}
+                onChange={(e) => patch({ tag_boost_weight: Number(e.target.value) || 0 })}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                每命中一个相关 canonical 给 fused score 增加此权重；0 = 关闭 boost
+              </p>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+

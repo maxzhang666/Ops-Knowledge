@@ -51,6 +51,8 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [shareToDept, setShareToDept] = useState(true)
+  // Spec 25 §6.2 — 启用智能标签子系统（auto_tag pipeline + L4 boost + L5 routing）
+  const [enableAutoTagging, setEnableAutoTagging] = useState(true)
   const [embModelId, setEmbModelId] = useState("")
   const [chunkingPreset, setChunkingPreset] = useState("general")
   const [customChunkSize, setCustomChunkSize] = useState(512)
@@ -83,6 +85,7 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
     setName("")
     setDescription("")
     setShareToDept(true)
+    setEnableAutoTagging(true)
     setEmbModelId("")
     setChunkingPreset("general")
     setCustomChunkSize(512)
@@ -111,6 +114,7 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
             ? { preset: "custom", chunk_size: customChunkSize, chunk_overlap: customOverlap, delimiter: customDelimiter, layout_recognize: layoutRecognize, auto_keywords: autoKeywords, auto_questions: autoQuestions }
             : { preset: chunkingPreset },
         share_to_dept: shareToDept,
+        enable_auto_tagging: enableAutoTagging,
       })
       reset()
       onOpenChange(false)
@@ -293,6 +297,21 @@ export function KBCreateDialog({ open, onOpenChange, onCreated }: KBCreateDialog
               onCheckedChange={(v) => setShareToDept(v as boolean)}
             />
             <Label htmlFor="kb-share" className="text-sm font-normal">共享至我的部门</Label>
+          </div>
+          {/* Spec 25 §6.2 — 智能标签总开关；详细配置在 KB 详情页 config tab */}
+          <div className="flex items-start gap-2 pt-1">
+            <Switch
+              id="kb-auto-tag"
+              checked={enableAutoTagging}
+              onCheckedChange={(v) => setEnableAutoTagging(v as boolean)}
+            />
+            <div className="flex-1">
+              <Label htmlFor="kb-auto-tag" className="text-sm font-normal">启用智能标签</Label>
+              <p className="text-[10px] text-muted-foreground">
+                建库后自动从条目内容提取标签，并启用基于标签的检索增强（语义过滤 / 重排 / 智能路由）；
+                详细参数可在 KB 配置页调整
+              </p>
+            </div>
           </div>
           </div>{/* 高级配置 end */}
           <DialogFooter>

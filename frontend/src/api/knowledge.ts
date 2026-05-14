@@ -224,6 +224,8 @@ export interface CreateKBPayload {
   chunking_config?: ChunkingConfig
   retrieval_config?: RetrievalConfig
   share_to_dept?: boolean
+  /** Spec 25 §6.2 — 启用智能标签子系统（auto_tag pipeline + L4 boost + L5 routing） */
+  enable_auto_tagging?: boolean
 }
 
 interface UpdateKBPayload {

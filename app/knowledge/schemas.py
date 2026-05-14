@@ -17,6 +17,9 @@ class KBCreate(BaseModel):
     chunking_config: dict | None = None
     retrieval_config: dict | None = None
     share_to_dept: bool = True
+    # Spec 25 §6.2 — 是否启用智能标签（auto_tag pipeline + L4 boost + L5 routing）；
+    # 默认 True = balanced preset。False = 仅保留用户手动标签 + L2 filter。
+    enable_auto_tagging: bool = True
 
 
 class KBUpdate(BaseModel):
