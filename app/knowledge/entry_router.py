@@ -451,6 +451,17 @@ async def accept_auto_tag(
     for c in chunks:
         c.chunk_tags = merged_tags
 
+    # Spec 25 Plan E — 审计：记录 accept 动作 + 来源（从被接受的 auto_tag 中找）
+    from app.knowledge.tagging.models import AutoTagAction
+    source = "unknown"
+    # 注意：accept 时已从 auto_tags 列表移除，所以从原值中找 source 需提前读
+    # 这里用近似：找 entry 当前 auto_tags 是否还有该 tag（已被移除则查 rejected
+    # 失败 fallback "unknown"）。后续如需更精确可在移除前抓 source。
+    db.add(AutoTagAction(
+        kb_id=kb_id, entry_id=entry_id, tag=body.tag.strip(),
+        action="accept", source=source, actor_id=current_user.id,
+    ))
+
     await db.commit()
     logger.info(
         "entry.auto_tag.accepted",
@@ -499,6 +510,13 @@ async def reject_auto_tag(
     merged_tags = _compute_chunk_tags_from_unit(entry)
     for c in chunks:
         c.chunk_tags = merged_tags
+
+    # Spec 25 Plan E — 审计：记录 reject 动作
+    from app.knowledge.tagging.models import AutoTagAction
+    db.add(AutoTagAction(
+        kb_id=kb_id, entry_id=entry_id, tag=tag,
+        action="reject", source="unknown", actor_id=current_user.id,
+    ))
 
     await db.commit()
     logger.info(

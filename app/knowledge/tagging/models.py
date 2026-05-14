@@ -93,6 +93,37 @@ class TagDictionaryAudit(Base, UUIDMixin):
     )
 
 
+class AutoTagAction(Base, UUIDMixin):
+    """Spec 25 Plan E — 自动标签 accept/reject 审计日志。
+
+    每次用户在编辑器点 ✓ accept 或 × reject auto_tag 写入一条记录，
+    供 governance 聚合接受率指标（accept / (accept + reject)）。
+    """
+    __tablename__ = "auto_tag_actions"
+
+    kb_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True,
+    )
+    tag: Mapped[str] = mapped_column(String(64), nullable=False)
+    # action: 'accept' | 'reject'
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    # source: 'keybert' | 'llm' | 'hybrid' | 'unknown'（被接受/拒绝时来源的提取器）
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+
 class KBTagSettings(Base):
     """KB 级标签功能配置 —— 独立表避免 KB.tag_config JSONB 混乱。
 

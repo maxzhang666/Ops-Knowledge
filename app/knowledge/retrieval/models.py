@@ -40,6 +40,10 @@ class RetrievalLog(Base, UUIDMixin):
     # 测试性场景。治理统计 / Plan 35 推荐查询应过滤 is_test=False，避免
     # 调参实验污染真实使用画像。
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Spec 25 Plan E — tag signal 观测：{tag_filter_used, routing_used,
+    # routed_tags, boost_weight, boosted_count, top_canonicals}。
+    # governance 聚合分析；空 dict / null 表示该次未启用任何 tag 子系统
+    tag_signals: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )

@@ -319,6 +319,19 @@ class RetrievalService:
                 }
                 for r in results
             ]
+            # Spec 25 Plan E — tag_signals 信号快照（governance 聚合分析）
+            boosted_count = sum(
+                1 for r in results
+                if getattr(r, "tag_boost", None) is not None
+            ) if hasattr(SearchResult, "tag_boost") else 0
+            tag_signals_snapshot: dict = {
+                "tag_filter_used": bool(tag_filter),
+                "routing_used": bool(routed_tags),
+                "routed_tags": routed_tags or [],
+                "boost_weight": max_boost_weight,
+                "boost_active": max_boost_weight > 0 and bool(canonical_embeddings_by_kb),
+                "boosted_count": boosted_count,
+            }
             async with async_session() as log_db:
                 for kid in kb_ids:
                     log_db.add(RetrievalLog(
@@ -332,6 +345,7 @@ class RetrievalService:
                         created_by=created_by,
                         results_json=results_snapshot,
                         is_test=is_test,
+                        tag_signals=tag_signals_snapshot,
                     ))
                 await log_db.commit()
         except Exception:

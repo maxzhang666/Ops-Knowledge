@@ -25,6 +25,10 @@ import {
   type KnowledgeBase,
 } from "@/api/knowledge"
 import { InfoTip } from "@/components/shared/info-tip"
+import {
+  tagGovernanceApi,
+  type TagGovernanceOverview,
+} from "@/api/tag_governance"
 
 /**
  * 治理 Tab —— Plan 32 M2.5
@@ -157,6 +161,9 @@ export function GovernanceTab({ kb }: GovernanceTabProps) {
         <TopicsCard kbId={kb.id} />
         <RetrievalRecoCard kbId={kb.id} />
       </div>
+
+      {/* Spec 25 Plan E — 标签覆盖（全宽） */}
+      <TagCoverageCard kbId={kb.id} />
 
       {/* 底：治理参数（全宽） */}
       <ConfigForm kb={kb} onSaved={load} />
@@ -853,5 +860,172 @@ function RetrievalRecoCard({ kbId }: { kbId: string }) {
         })}
       </CardContent>
     </Card>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// Spec 25 Plan E — Tag coverage card (字典 + 孤儿 + 接受率 + 检索使用率)
+
+function TagCoverageCard({ kbId }: { kbId: string }) {
+  const [data, setData] = useState<TagGovernanceOverview | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    tagGovernanceApi.overview(kbId)
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setData(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [kbId])
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader><CardTitle className="text-sm">标签覆盖</CardTitle></CardHeader>
+        <CardContent><LoadingSpinner className="py-8" /></CardContent>
+      </Card>
+    )
+  }
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader><CardTitle className="text-sm">标签覆盖</CardTitle></CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">暂无数据</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // tag cloud — usage_count 决定 font-size (rem 比例)
+  const maxUsage = Math.max(1, ...data.tag_cloud.map((t) => t.usage_count))
+  const cloudFontSize = (count: number) => {
+    const ratio = count / maxUsage
+    return 0.75 + ratio * 0.75  // 0.75 ~ 1.5 rem
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between text-sm">
+          <span>标签覆盖</span>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            字典 {data.dictionary_size} 个 · 已废弃 {data.deprecated_size}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* 标签云 */}
+        <div>
+          <div className="mb-2 text-[11px] font-medium text-muted-foreground">
+            热门标签 (Top 20)
+          </div>
+          {data.tag_cloud.length === 0 ? (
+            <p className="text-xs text-muted-foreground">暂无使用数据</p>
+          ) : (
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              {data.tag_cloud.map((t) => (
+                <span
+                  key={t.canonical}
+                  className="cursor-default hover:text-primary"
+                  style={{ fontSize: `${cloudFontSize(t.usage_count)}rem` }}
+                  title={`${t.usage_count} 次使用`}
+                >
+                  {t.canonical}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 三组指标 */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <MetricBlock
+            label="孤儿 chunks"
+            primary={`${data.orphan_chunks}`}
+            secondary={
+              data.total_chunks > 0
+                ? `${(data.orphan_ratio * 100).toFixed(1)}% / 共 ${data.total_chunks}`
+                : "—"
+            }
+            tone={data.orphan_ratio > 0.3 ? "warning" : "default"}
+          />
+          <MetricBlock
+            label="自动标签接受率 (30d)"
+            primary={
+              data.accept_ratio_30d !== null
+                ? `${(data.accept_ratio_30d * 100).toFixed(0)}%`
+                : "—"
+            }
+            secondary={
+              data.accept_count_30d + data.reject_count_30d > 0
+                ? `接受 ${data.accept_count_30d} / 拒绝 ${data.reject_count_30d}`
+                : "近 30 天无操作"
+            }
+          />
+          <MetricBlock
+            label="条目含 auto_tags"
+            primary={`${data.entries_with_auto_tags}`}
+            secondary={
+              data.total_entries > 0
+                ? `${((data.entries_with_auto_tags / data.total_entries) * 100).toFixed(0)}% / 共 ${data.total_entries}`
+                : "—"
+            }
+          />
+        </div>
+
+        {/* 检索使用情况 */}
+        <div>
+          <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+            近 30 天检索 tag 子系统使用 (排除 is_test)
+          </div>
+          {data.retrieval_total_30d === 0 ? (
+            <p className="text-xs text-muted-foreground">无检索记录</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge variant="outline">
+                总查询 {data.retrieval_total_30d}
+              </Badge>
+              <Badge variant="outline">
+                tag_filter {data.tag_filter_used_30d} (
+                {((data.tag_filter_used_30d / data.retrieval_total_30d) * 100).toFixed(0)}%)
+              </Badge>
+              <Badge variant="outline">
+                routing {data.routing_used_30d} (
+                {((data.routing_used_30d / data.retrieval_total_30d) * 100).toFixed(0)}%)
+              </Badge>
+              <Badge variant="outline">
+                boost {data.boost_used_30d} (
+                {((data.boost_used_30d / data.retrieval_total_30d) * 100).toFixed(0)}%)
+              </Badge>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function MetricBlock({
+  label, primary, secondary, tone = "default",
+}: {
+  label: string; primary: string; secondary: string;
+  tone?: "default" | "warning"
+}) {
+  return (
+    <div className="rounded-md border bg-muted/30 px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div
+        className={
+          "mt-0.5 text-lg font-semibold tabular-nums " +
+          (tone === "warning" ? "text-warning" : "text-foreground")
+        }
+      >
+        {primary}
+      </div>
+      <div className="text-[11px] text-muted-foreground">{secondary}</div>
+    </div>
   )
 }

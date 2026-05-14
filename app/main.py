@@ -46,6 +46,7 @@ from app.model.router import router as model_router
 from app.system.init_router import router as init_router
 from app.knowledge.tagging.router import router as tag_dictionary_router
 from app.knowledge.tagging.kb_settings import router as kb_tag_settings_router
+from app.knowledge.tagging.governance import router as tag_governance_router
 from app.system.milvus_router import router as system_milvus_router
 from app.system.notification_router import router as notification_router
 from app.system.router import router as system_router
@@ -230,6 +231,7 @@ app.include_router(kb_entry_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_sources_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tag_dictionary_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_tag_settings_router, prefix=settings.API_V1_PREFIX)
+app.include_router(tag_governance_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ingestion_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agent_router, prefix=settings.API_V1_PREFIX)
