@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react"
 import { Check, Trash2, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
+import { Collapse, Select } from "@douyinfe/semi-ui"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { InfoTip } from "@/components/shared/info-tip"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
 import {
   Card, CardHeader, CardTitle, CardDescription, CardContent,
 } from "@/components/ui/card"
@@ -255,7 +253,10 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
   }
 
   return (
-    <div className="mt-4 flex max-w-2xl flex-col gap-6">
+    // grid auto-fit：单卡最小 360px，浏览器按容器宽度自动决定列数（1 / 2 / 3+）。
+    // 高内容卡片（分片 / 智能标签 / 危险区）用 [grid-column:1/-1] 占满整行，避免与
+    // 矮卡同行造成视觉跳跃。DESIGN.md §Layout：utility 卡片自然排布、章节用全宽分隔。
+    <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] gap-6">
       {/* Basic info */}
       <Card>
         <CardHeader>
@@ -301,20 +302,16 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label>Embedding 模型</Label>
-            <Select value={embModelId || undefined} onValueChange={(v) => v != null && setEmbModelId(v)}>
-              <SelectTrigger className="w-full">
-                {embModelId
-                  ? <span className="truncate">{(() => { const m = embModels.find(e => e.id === embModelId); return m ? `${m.display_name || m.model_id} (${m.provider_name || "未知"})` : embModelId })()}</span>
-                  : <SelectValue placeholder="使用系统默认" />}
-              </SelectTrigger>
-              <SelectContent>
-                {embModels.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.display_name || m.model_id} ({m.provider_name || "未知"})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Select
+              value={embModelId || undefined}
+              onChange={(v) => typeof v === "string" && setEmbModelId(v)}
+              placeholder="使用系统默认"
+              className="w-full"
+              optionList={embModels.map((m) => ({
+                value: m.id,
+                label: `${m.display_name || m.model_id} (${m.provider_name || "未知"})`,
+              }))}
+            />
           </div>
           {(embChanged || embJustSaved) && (
             <div className="flex justify-end">
@@ -335,8 +332,9 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         </CardContent>
       </Card>
 
-      {/* Chunking — 仅文件型 KB 显示（条目型不切片，由降级阈值自动处理） */}
-      {kb.source_type === "file" && <Card>
+      {/* Chunking — 仅文件型 KB 显示（条目型不切片，由降级阈值自动处理）；
+          内容多，占满整行避免与矮卡同行视觉跳跃 */}
+      {kb.source_type === "file" && <Card className="[grid-column:1/-1]">
         <CardHeader>
           <CardTitle>分片配置</CardTitle>
           <CardDescription>选择文档分片策略预设</CardDescription>
@@ -344,18 +342,12 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label>分片预设</Label>
-            <Select value={chunkingPreset} onValueChange={(v) => v && setChunkingPreset(v)}>
-              <SelectTrigger className="w-full">
-                {chunkingPreset
-                  ? <span>{CHUNKING_PRESETS.find(p => p.value === chunkingPreset)?.label ?? chunkingPreset}</span>
-                  : <SelectValue />}
-              </SelectTrigger>
-              <SelectContent>
-                {CHUNKING_PRESETS.map((p) => (
-                  <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Select
+              value={chunkingPreset}
+              onChange={(v) => typeof v === "string" && setChunkingPreset(v)}
+              className="w-full"
+              optionList={CHUNKING_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+            />
           </div>
           {chunkingPreset === "custom" && (
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
@@ -576,10 +568,15 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
         onConfirm={doSaveEmbedding}
       />
 
-      {/* Danger Zone — destructive actions always live at the bottom so they
-          sit far from routine Save buttons and can't be triggered by mistake. */}
-      <Card className="border-destructive/30">
-        <CardHeader className="border-b border-destructive/20 bg-destructive/5">
+      {/* Spec 25 §6 — 智能标签设置（admin only），含 3 档 preset + 高级展开；
+          内容多，占满整行 */}
+      <TagSettingsCard kbId={kb.id} />
+
+      {/* Danger Zone — 永远放在最底部 + 全宽占据，远离日常 Save 按钮且足够醒目。
+          DESIGN.md "chrome 退后"：去掉 header 浅红背景（曾导致与 content 色块断层），
+          危险性靠 destructive border + AlertTriangle 图标 + destructive 文案/按钮承担。 */}
+      <Card className="border-destructive/30 [grid-column:1/-1]">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="size-4" />
             危险区
@@ -588,7 +585,7 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
             此区域的操作不可撤销，请谨慎操作。
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex items-center justify-between gap-4 pt-4">
+        <CardContent className="flex items-center justify-between gap-4">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">删除知识库</p>
             <p className="text-xs text-muted-foreground">
@@ -605,9 +602,6 @@ export function ConfigTab({ kb, onUpdated, onDeleted }: ConfigTabProps) {
           </Button>
         </CardContent>
       </Card>
-
-      {/* Spec 25 §6 — 智能标签设置（admin only），含 3 档 preset + 高级展开 */}
-      <TagSettingsCard kbId={kb.id} />
 
       <ConfirmDialog
         open={deleteOpen}
@@ -692,8 +686,8 @@ const TAG_PRESETS: { value: Exclude<TagPreset, "custom">; label: string; desc: s
   { value: "high_quality", label: "高质量", desc: "LLM，max 8 标签，置信度 0.5，启用智能路由" },
 ]
 
-// Spec 25 — provider 下拉选项；trigger 必须 label-aware 渲染避免显示原 value
-// （shadcn SelectValue 默认显示 value 原文，与 memory feedback_dropdown_display_label 一致）
+// Spec 25 — provider 下拉选项；本组件已用 Semi Select（天然显示 label 而非 value）；
+// hint 走 Select renderOptionItem 自定义两段式选项展示
 const TAG_PROVIDER_OPTIONS: { value: KBTagSettings["auto_tag_provider"]; label: string; hint: string }[] = [
   { value: "keybert", label: "KeyBERT", hint: "仅 embedding，无 LLM 成本" },
   { value: "llm", label: "LLM", hint: "小模型抽取" },
@@ -741,7 +735,7 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
 
   if (loading) {
     return (
-      <Card>
+      <Card className="[grid-column:1/-1]">
         <CardHeader><CardTitle>智能标签设置</CardTitle></CardHeader>
         <CardContent><p className="text-xs text-muted-foreground">加载中…</p></CardContent>
       </Card>
@@ -749,7 +743,7 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
   }
   if (!data) {
     return (
-      <Card>
+      <Card className="[grid-column:1/-1]">
         <CardHeader><CardTitle>智能标签设置</CardTitle></CardHeader>
         <CardContent><p className="text-xs text-muted-foreground">无法加载配置，请刷新页面重试</p></CardContent>
       </Card>
@@ -757,7 +751,7 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
   }
 
   return (
-    <Card>
+    <Card className="[grid-column:1/-1]">
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <span>智能标签设置</span>
@@ -821,71 +815,59 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
           )}
         </div>
 
-        {/* 高级展开 */}
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            {showAdvanced ? "收起高级参数 ▴" : "展开高级参数 ▾"}
-          </button>
-        </div>
-
-        {showAdvanced && (
+        {/* 高级展开：Semi Collapse 替代手写按钮 + 条件渲染，得到一致的展开动画/可访问性 */}
+        <Collapse
+          activeKey={showAdvanced ? ["adv"] : []}
+          onChange={(keys) => setShowAdvanced(Array.isArray(keys) && keys.includes("adv"))}
+        >
+          <Collapse.Panel header="高级参数" itemKey="adv">
           <div className="grid grid-cols-1 gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Provider</Label>
+              {/* Semi Select 天然显示 label 而非 value，无需 label-aware hack；
+                  renderOptionItem 自定义"label + 灰 hint"两段式选项 */}
               <Select
                 value={data.auto_tag_provider}
-                onValueChange={(v) => v && patch({ auto_tag_provider: v as KBTagSettings["auto_tag_provider"] })}
-              >
-                <SelectTrigger className="w-full">
-                  {/* label-aware：避免 SelectValue 显示原 value (keybert/llm/hybrid)；
-                      memory feedback_dropdown_display_label */}
-                  <span className="truncate">
-                    {TAG_PROVIDER_OPTIONS.find((p) => p.value === data.auto_tag_provider)?.label
-                      ?? data.auto_tag_provider}
-                  </span>
-                </SelectTrigger>
-                <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
-                  {TAG_PROVIDER_OPTIONS.map((p) => (
-                    <SelectItem key={p.value} value={p.value}>
-                      <span className="font-medium">{p.label}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">{p.hint}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(v) => typeof v === "string" && patch({ auto_tag_provider: v as KBTagSettings["auto_tag_provider"] })}
+                className="w-full"
+                optionList={TAG_PROVIDER_OPTIONS.map((p) => ({
+                  value: p.value,
+                  label: p.label,
+                  // Semi 允许 extra fields 透传到 renderOptionItem
+                  hint: p.hint,
+                }))}
+                renderOptionItem={(renderProps) => (
+                  <div
+                    role="option"
+                    aria-selected={renderProps.selected}
+                    onClick={renderProps.onClick}
+                    onMouseEnter={renderProps.onMouseEnter}
+                    className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-accent ${renderProps.selected ? "bg-accent/60" : ""}`}
+                  >
+                    <span className="font-medium">{renderProps.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {(renderProps as unknown as { hint?: string }).hint}
+                    </span>
+                  </div>
+                )}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs">LLM 模型（auto_tag + routing 共用）</Label>
               <Select
                 value={data.auto_tag_llm_model_id ?? "__none__"}
-                onValueChange={(v) => patch({
-                  auto_tag_llm_model_id: v === "__none__" ? null : v,
+                onChange={(v) => patch({
+                  auto_tag_llm_model_id: v === "__none__" ? null : (v as string),
                 })}
-              >
-                <SelectTrigger className="w-full">
-                  {/* label-aware：未配置时显示占位文案，已选时显示 display_name 而非 UUID */}
-                  <span className="truncate">
-                    {data.auto_tag_llm_model_id
-                      ? (() => {
-                          const m = llmOptions.find((x) => x.id === data.auto_tag_llm_model_id)
-                          return m ? (m.display_name || m.model_id) : data.auto_tag_llm_model_id
-                        })()
-                      : "（未配置 / 跳过）"}
-                  </span>
-                </SelectTrigger>
-                <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
-                  <SelectItem value="__none__">（未配置 / 跳过）</SelectItem>
-                  {llmOptions.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.display_name || m.model_id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                className="w-full"
+                optionList={[
+                  { value: "__none__", label: "（未配置 / 跳过）" },
+                  ...llmOptions.map((m) => ({
+                    value: m.id,
+                    label: m.display_name || m.model_id,
+                  })),
+                ]}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-xs">每条目最多标签数 ({data.auto_tag_max_per_unit})</Label>
@@ -933,7 +915,8 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
               </p>
             </div>
           </div>
-        )}
+          </Collapse.Panel>
+        </Collapse>
       </CardContent>
     </Card>
   )

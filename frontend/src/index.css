@@ -45,50 +45,61 @@
     --color-warning-foreground: var(--warning-foreground);
     --color-info: var(--info);
     --color-info-foreground: var(--info-foreground);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
+    /* DESIGN.md typography — body 17px / 1.47 行高 / -0.374px tracking。
+       text-base 重定义后 `text-base` 类即 17px；text-sm (14px)/text-xs (12px) 等
+       Tailwind 默认刚好对齐 caption / fine-print，不需重写。 */
+    --text-base: 1.0625rem;                      /* 17px DESIGN.md body */
+    --text-base--line-height: calc(1.47 / 1.0625); /* 1.47 行高（按 17px 反算） */
+    --text-base--letter-spacing: -0.022em;       /* ≈ -0.374px @ 17px */
+    /* DESIGN.md 圆角阶梯（亮色生效；暗色继承 --radius，等价于按比例缩放） */
+    --radius-sm: calc(var(--radius) * 0.444);   /*  8px when radius=18 */
+    --radius-md: calc(var(--radius) * 0.611);   /* 11px */
+    --radius-lg: var(--radius);                  /* 18px */
     --radius-xl: calc(var(--radius) * 1.4);
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
-    --shadow-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+    /* DESIGN.md "chrome 零阴影"：默认装饰阴影禁用；elevation-2 例外保留为
+       极轻 hover 反馈（用于 KB/Agent 卡片悬停抬升，是交互信号非装饰）。
+       elevation-3 暂时未使用，留 none；如需 Modal 类弹层阴影另议。 */
+    --shadow-elevation-1: none;
     --shadow-elevation-2: 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 6px -1px rgb(0 0 0 / 0.06);
-    --shadow-elevation-3: 0 2px 4px 0 rgb(0 0 0 / 0.04), 0 8px 20px -4px rgb(0 0 0 / 0.08);
+    --shadow-elevation-3: none;
 }
 
-/* Ops-Knowledge palette: Notion/Stripe-style high-contrast.
-   Primary 接近黑（微带 230° 冷调），不是鲜艳主色；视觉靠 Badge 语义色 + 细节承担。 */
+/* Ops-Knowledge palette — Light: Apple 风（见 /DESIGN.md），Dark: 保留 Notion/Stripe 反转。
+   亮色主色 #0066cc Action Blue 承担所有交互信号；chrome 零阴影；hairline #e0e0e0 / 圆角 18px。
+   Sidebar 保留近黑以匹配 global-nav 角色（DESIGN.md 中 global-nav 也是黑底）。 */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.16 0.01 230);
+    --background: oklch(1 0 0);                 /* #ffffff canvas */
+    --foreground: oklch(0.16 0.01 230);         /* #1d1d1f ink 等价 */
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.16 0.01 230);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.16 0.01 230);
 
-    --primary: oklch(0.22 0.02 230);         /* 近黑，仅微冷调 */
+    --primary: oklch(0.493 0.179 254);          /* #0066cc Action Blue — DESIGN.md primary */
     --primary-foreground: oklch(0.985 0 0);
 
-    --secondary: oklch(0.975 0 0);           /* 纯中性浅灰 */
-    --secondary-foreground: oklch(0.22 0.02 230);
+    --secondary: oklch(0.965 0.001 264);        /* #f5f5f7 parchment — DESIGN.md canvas-parchment */
+    --secondary-foreground: oklch(0.16 0.01 230);
 
-    --muted: oklch(0.97 0 0);
+    --muted: oklch(0.965 0.001 264);            /* 同 parchment：muted bg 沿用 */
     --muted-foreground: oklch(0.52 0.008 230);
 
-    --accent: oklch(0.96 0.003 230);         /* hover / selected — 近白 */
-    --accent-foreground: oklch(0.22 0.02 230);
+    --accent: oklch(0.965 0.001 264);           /* hover / selected — parchment 一致 */
+    --accent-foreground: oklch(0.16 0.01 230);
 
     --destructive: oklch(0.58 0.22 25);
-    --border: oklch(0.93 0 0);
-    --input: oklch(0.93 0 0);
-    --ring: oklch(0.55 0.08 230);
+    --border: oklch(0.91 0 0);                  /* #e0e0e0 hairline — DESIGN.md hairline */
+    --input: oklch(0.91 0 0);
+    --ring: oklch(0.524 0.182 254);             /* #0071e3 primary-focus — DESIGN.md focus 蓝 */
 
-    --success: oklch(0.62 0.14 160);         /* Stripe 青绿 */
+    --success: oklch(0.62 0.14 160);
     --success-foreground: oklch(0.985 0 0);
-    --warning: oklch(0.74 0.16 55);          /* 暖橙 */
+    --warning: oklch(0.74 0.16 55);
     --warning-foreground: oklch(0.22 0.05 55);
-    --info: oklch(0.56 0.14 230);            /* 中度蓝 */
+    --info: oklch(0.56 0.14 230);
     --info-foreground: oklch(0.985 0 0);
 
     --chart-1: oklch(0.62 0.14 160);
@@ -96,16 +107,17 @@
     --chart-3: oklch(0.74 0.16 55);
     --chart-4: oklch(0.58 0.20 300);
     --chart-5: oklch(0.58 0.20 25);
-    --radius: 0.5rem;                         /* 略收敛，Stripe 风偏方正 */
+    --radius: 1.125rem;                         /* 18px — DESIGN.md rounded.lg (utility card) */
 
+    /* Sidebar 类比 DESIGN.md global-nav：保留近黑，不切 Action Blue。 */
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.22 0.02 230);
     --sidebar-primary: oklch(0.22 0.02 230);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.96 0.003 230);
+    --sidebar-accent: oklch(0.965 0.001 264);
     --sidebar-accent-foreground: oklch(0.22 0.02 230);
-    --sidebar-border: oklch(0.93 0 0);
-    --sidebar-ring: oklch(0.55 0.08 230);
+    --sidebar-border: oklch(0.91 0 0);
+    --sidebar-ring: oklch(0.524 0.182 254);
 }
 
 .dark {
@@ -161,7 +173,8 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-background text-foreground;
+    /* DESIGN.md body: 17px / 1.47 / -0.374px (via --text-base 重定义) */
+    @apply bg-background text-foreground text-base;
     }
   html {
     @apply font-sans;
