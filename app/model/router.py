@@ -15,10 +15,18 @@ from app.model.schemas import (
     RegistryEntryUpdate,
     TestResult,
 )
+from app.auth.dependencies import require_role
+from app.auth.models import UserRole
 from app.model.providers import list_provider_schemas
 from app.model.service import ModelService
 
 router = APIRouter(prefix="/model", tags=["model"])
+
+# 2026-05-14: ProviderResponse 显式包含 api_key 明文（admin "密钥管理"视图）。
+# 安全约束：所有暴露 ProviderResponse / 修改 provider 凭据 / 测试连通性的
+# endpoint 必须限制为 system_admin。registry 与 provider-types 等仅元数据
+# 的 endpoint 仍对所有登录用户开放（不含密钥）。
+_ADMIN_ONLY = [require_role(UserRole.SYSTEM_ADMIN)]
 
 
 class DiscoverRequest(BaseModel):
@@ -120,7 +128,10 @@ async def sync_registry(
 # ── Provider endpoints ──────────────────────────────────────────
 
 
-@router.post("", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED,
+    dependencies=_ADMIN_ONLY,
+)
 async def create_provider(
     data: ProviderCreate,
     current_user: CurrentUser,
@@ -131,7 +142,7 @@ async def create_provider(
     return provider
 
 
-@router.get("", response_model=list[ProviderResponse])
+@router.get("", response_model=list[ProviderResponse], dependencies=_ADMIN_ONLY)
 async def list_providers(
     current_user: CurrentUser,
     active_only: bool = False,
@@ -141,7 +152,7 @@ async def list_providers(
     return await svc.list_providers(active_only=active_only)
 
 
-@router.get("/{provider_id}", response_model=ProviderResponse)
+@router.get("/{provider_id}", response_model=ProviderResponse, dependencies=_ADMIN_ONLY)
 async def get_provider(
     provider_id: uuid.UUID,
     current_user: CurrentUser,
@@ -154,7 +165,7 @@ async def get_provider(
     return provider
 
 
-@router.post("/{provider_id}/update", response_model=ProviderResponse)
+@router.post("/{provider_id}/update", response_model=ProviderResponse, dependencies=_ADMIN_ONLY)
 async def update_provider(
     provider_id: uuid.UUID,
     data: ProviderUpdate,
@@ -168,7 +179,7 @@ async def update_provider(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.post("/{provider_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{provider_id}/delete", status_code=status.HTTP_204_NO_CONTENT, dependencies=_ADMIN_ONLY)
 async def delete_provider(
     provider_id: uuid.UUID,
     current_user: CurrentUser,
@@ -181,7 +192,7 @@ async def delete_provider(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.post("/{provider_id}/test", response_model=TestResult)
+@router.post("/{provider_id}/test", response_model=TestResult, dependencies=_ADMIN_ONLY)
 async def test_connectivity(
     provider_id: uuid.UUID,
     current_user: CurrentUser,
