@@ -692,6 +692,14 @@ const TAG_PRESETS: { value: Exclude<TagPreset, "custom">; label: string; desc: s
   { value: "high_quality", label: "高质量", desc: "LLM，max 8 标签，置信度 0.5，启用智能路由" },
 ]
 
+// Spec 25 — provider 下拉选项；trigger 必须 label-aware 渲染避免显示原 value
+// （shadcn SelectValue 默认显示 value 原文，与 memory feedback_dropdown_display_label 一致）
+const TAG_PROVIDER_OPTIONS: { value: KBTagSettings["auto_tag_provider"]; label: string; hint: string }[] = [
+  { value: "keybert", label: "KeyBERT", hint: "仅 embedding，无 LLM 成本" },
+  { value: "llm", label: "LLM", hint: "小模型抽取" },
+  { value: "hybrid", label: "Hybrid", hint: "KeyBERT 候选 + LLM 改写" },
+]
+
 function TagSettingsCard({ kbId }: { kbId: string }) {
   const role = useAuthStore((s) => s.user?.role)
   const [data, setData] = useState<KBTagSettings | null>(null)
@@ -832,11 +840,21 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
                 value={data.auto_tag_provider}
                 onValueChange={(v) => v && patch({ auto_tag_provider: v as KBTagSettings["auto_tag_provider"] })}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="keybert">KeyBERT（仅 embedding，无 LLM 成本）</SelectItem>
-                  <SelectItem value="llm">LLM（小模型抽取）</SelectItem>
-                  <SelectItem value="hybrid">Hybrid（KeyBERT 候选 + LLM 改写）</SelectItem>
+                <SelectTrigger className="w-full">
+                  {/* label-aware：避免 SelectValue 显示原 value (keybert/llm/hybrid)；
+                      memory feedback_dropdown_display_label */}
+                  <span className="truncate">
+                    {TAG_PROVIDER_OPTIONS.find((p) => p.value === data.auto_tag_provider)?.label
+                      ?? data.auto_tag_provider}
+                  </span>
+                </SelectTrigger>
+                <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                  {TAG_PROVIDER_OPTIONS.map((p) => (
+                    <SelectItem key={p.value} value={p.value}>
+                      <span className="font-medium">{p.label}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">{p.hint}</span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -848,8 +866,18 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
                   auto_tag_llm_model_id: v === "__none__" ? null : v,
                 })}
               >
-                <SelectTrigger><SelectValue placeholder="未配置" /></SelectTrigger>
-                <SelectContent>
+                <SelectTrigger className="w-full">
+                  {/* label-aware：未配置时显示占位文案，已选时显示 display_name 而非 UUID */}
+                  <span className="truncate">
+                    {data.auto_tag_llm_model_id
+                      ? (() => {
+                          const m = llmOptions.find((x) => x.id === data.auto_tag_llm_model_id)
+                          return m ? (m.display_name || m.model_id) : data.auto_tag_llm_model_id
+                        })()
+                      : "（未配置 / 跳过）"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                   <SelectItem value="__none__">（未配置 / 跳过）</SelectItem>
                   {llmOptions.map((m) => (
                     <SelectItem key={m.id} value={m.id}>

@@ -122,9 +122,24 @@ export default function TagDictionaryPage() {
       <div className="flex flex-wrap items-center gap-2">
         <Select value={kbId} onValueChange={(v) => { setKbId(v ?? ""); setPage(1) }}>
           <SelectTrigger className="w-64">
-            <SelectValue placeholder="选择知识库" />
+            {/* label-aware：避免 trigger 显示 KB UUID */}
+            {kbId
+              ? (() => {
+                  const kb = kbs.find((k) => k.id === kbId)
+                  return (
+                    <span className="truncate">
+                      {kb?.name ?? kbId}
+                      {kb && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          ({kb.source_type})
+                        </span>
+                      )}
+                    </span>
+                  )
+                })()
+              : <SelectValue placeholder="选择知识库" />}
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
             {kbs.map((kb) => (
               <SelectItem key={kb.id} value={kb.id}>
                 {kb.name}
