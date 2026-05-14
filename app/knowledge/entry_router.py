@@ -9,6 +9,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -391,3 +392,148 @@ async def delete_entry(
         "entry.deleted",
         kb_id=str(kb_id), unit_id=str(entry_id), actor=str(current_user.id),
     )
+
+
+# ── Spec 25 Plan B — 自动标签接受 / 拒绝 / 重新生成 ─────────────
+
+
+class AutoTagActionBody(BaseModel):
+    tag: str = Field(..., min_length=1, max_length=64)
+
+
+@router.post("/{entry_id}/auto-tags/accept", response_model=EntryResponse)
+async def accept_auto_tag(
+    kb_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    body: AutoTagActionBody,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """把 auto_tags 中的某条标签接受为 user tag：写入 entry.tags（normalize 后），
+    同步刷 chunks.chunk_tags；不再触发重 embed（标签已是 user 信号）。"""
+    from app.knowledge.tagging.normalizer import normalize_tags
+    from app.knowledge.chunk_service import _compute_chunk_tags_from_unit
+
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        raise HTTPException(404, "Knowledge base not found")
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
+    entry = await db.get(KnowledgeEntry, entry_id)
+    if entry is None or entry.knowledge_base_id != kb_id:
+        raise HTTPException(404, "Entry not found")
+
+    # 1. normalize 用户标签（允许字典命中或创建新 canonical）
+    normalized = await normalize_tags(
+        db, kb_id, [body.tag], allow_create=True, actor_id=current_user.id,
+    )
+    if not normalized:
+        raise HTTPException(400, "Tag normalization yielded no canonical")
+    new_tag = normalized[0]
+
+    existing = list(entry.tags or [])
+    if new_tag not in existing:
+        existing.append(new_tag)
+        entry.tags = existing
+
+    # 2. 从 auto_tags 移除已接受项（避免重复展示）
+    if entry.auto_tags:
+        entry.auto_tags = [
+            t for t in entry.auto_tags
+            if not (isinstance(t, dict) and t.get("tag") == new_tag)
+        ] or None
+
+    # 3. chunks.chunk_tags 同步重写
+    chunks_q = await db.execute(
+        select(Chunk).where(Chunk.unit_type == "entry", Chunk.unit_id == entry_id)
+    )
+    chunks = chunks_q.scalars().all()
+    merged_tags = _compute_chunk_tags_from_unit(entry)
+    for c in chunks:
+        c.chunk_tags = merged_tags
+
+    await db.commit()
+    logger.info(
+        "entry.auto_tag.accepted",
+        kb_id=str(kb_id), unit_id=str(entry_id),
+        tag=new_tag, actor=str(current_user.id),
+    )
+    return (await _build_entry_responses(db, [entry]))[0]
+
+
+@router.post("/{entry_id}/auto-tags/reject", response_model=EntryResponse)
+async def reject_auto_tag(
+    kb_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    body: AutoTagActionBody,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """拒绝 auto_tag：加入 rejected_auto_tags 黑名单 + 从 auto_tags 移除。
+    下次 extract 提取到该标签时会被过滤掉。"""
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        raise HTTPException(404, "Knowledge base not found")
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
+    entry = await db.get(KnowledgeEntry, entry_id)
+    if entry is None or entry.knowledge_base_id != kb_id:
+        raise HTTPException(404, "Entry not found")
+
+    tag = body.tag.strip()
+    rejected = list(entry.rejected_auto_tags or [])
+    if tag not in rejected:
+        rejected.append(tag)
+        entry.rejected_auto_tags = rejected
+
+    if entry.auto_tags:
+        entry.auto_tags = [
+            t for t in entry.auto_tags
+            if not (isinstance(t, dict) and t.get("tag") == tag)
+        ] or None
+
+    # chunks.chunk_tags 也要同步移除（如果之前 auto 通道写进去过）
+    from app.knowledge.chunk_service import _compute_chunk_tags_from_unit
+    chunks_q = await db.execute(
+        select(Chunk).where(Chunk.unit_type == "entry", Chunk.unit_id == entry_id)
+    )
+    chunks = chunks_q.scalars().all()
+    merged_tags = _compute_chunk_tags_from_unit(entry)
+    for c in chunks:
+        c.chunk_tags = merged_tags
+
+    await db.commit()
+    logger.info(
+        "entry.auto_tag.rejected",
+        kb_id=str(kb_id), unit_id=str(entry_id),
+        tag=tag, actor=str(current_user.id),
+    )
+    return (await _build_entry_responses(db, [entry]))[0]
+
+
+@router.post("/{entry_id}/auto-tags/regenerate", status_code=status.HTTP_202_ACCEPTED)
+async def regenerate_auto_tags(
+    kb_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动重新生成 auto_tags（admin / KB owner）。
+    异步触发 extract_auto_tags celery 任务，返回 task_id 供前端轮询。"""
+    from app.core.tasks import safe_delay
+    from app.knowledge.tagging.extract_tasks import extract_auto_tags
+
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        raise HTTPException(404, "Knowledge base not found")
+    await check_resource_access(current_user, "knowledge_base", kb.id, db, kb.created_by, "edit")
+    entry = await db.get(KnowledgeEntry, entry_id)
+    if entry is None or entry.knowledge_base_id != kb_id:
+        raise HTTPException(404, "Entry not found")
+
+    result = safe_delay(extract_auto_tags, "entry", str(entry_id))
+    task_id = getattr(result, "id", None)
+    logger.info(
+        "entry.auto_tags.regenerate",
+        kb_id=str(kb_id), unit_id=str(entry_id),
+        task_id=task_id, actor=str(current_user.id),
+    )
+    return {"task_id": task_id, "status": "accepted"}

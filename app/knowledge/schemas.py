@@ -80,6 +80,9 @@ class EntryResponse(BaseModel):
     title: str
     content: str
     tags: list[str] | None
+    # Spec 25 Plan B — 自动标签建议（按 confidence 排序）
+    auto_tags: list[dict] | None = None
+    rejected_auto_tags: list[str] | None = None
     token_count: int
     is_archived: bool
     is_stale: bool

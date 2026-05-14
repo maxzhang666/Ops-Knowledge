@@ -216,6 +216,27 @@ def embed_unit_chunks(self, unit_type: str, unit_id: str, kb_id: str) -> dict:
 
         logger.info("embed_unit_done", unit_type=unit_type, unit_id=unit_id, count=len(vector_ids))
 
+        # Spec 25 Plan B — entry 类型 embed 完成后链式触发 auto_tags 提取。
+        # 提取 task 内部对比 auto_tag set，若变化才重置 vector_id + 触发二次 embed；
+        # 第二次 embed 完成又链式 extract，set 相等 → 停止（最多 2 次 embed）。
+        if unit_type == "entry":
+            try:
+                from app.core.tasks import safe_delay
+                from app.knowledge.tagging.extract_tasks import extract_auto_tags
+                with Session(engine) as s_tag:
+                    kb_tag = s_tag.get(KnowledgeBase, kb_id)
+                    if kb_tag is None:
+                        raise RuntimeError("kb vanished")
+                    from app.knowledge.tagging.models import KBTagSettings
+                    settings_row = s_tag.get(KBTagSettings, kb_tag.id)
+                if settings_row is not None and settings_row.auto_tag_enabled:
+                    safe_delay(extract_auto_tags, "entry", unit_id)
+            except Exception:
+                logger.debug(
+                    "auto_tag_dispatch_failed",
+                    unit_id=unit_id, exc_info=True,
+                )
+
         # P24.M4 RAPTOR hook — 仅文件型支持（RAPTOR 假设 doc-level 层级树）
         if unit_type == "document":
             try:

@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.knowledge.sources.entry_tasks",    # 条目批量导入
         "app.knowledge.milvus.governance_tasks", # 孤儿向量扫描 / 清理
         "app.knowledge.tagging.tasks",          # 字典治理回填 + 统计重算
+        "app.knowledge.tagging.extract_tasks",  # 自动标签提取（Plan B）
         "app.system.celery_failures",            # 失败任务 signal handler
     ],
 )

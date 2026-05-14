@@ -5,6 +5,13 @@ import type { PaginatedResponse } from "./types"
 
 export type EntryProcessingStatus = "pending" | "processing" | "completed" | "error"
 
+export interface AutoTagCandidate {
+  tag: string
+  confidence: number
+  source: "keybert" | "llm" | "hybrid"
+  extracted_at: string
+}
+
 export interface KnowledgeEntry {
   id: string
   knowledge_base_id: string
@@ -12,6 +19,10 @@ export interface KnowledgeEntry {
   title: string
   content: string
   tags: string[] | null
+  /** Spec 25 Plan B — 系统提取的标签建议（按 confidence 排序） */
+  auto_tags: AutoTagCandidate[] | null
+  /** 用户拒绝过的 auto_tags（下次提取会跳过） */
+  rejected_auto_tags: string[] | null
   token_count: number
   is_archived: boolean
   is_stale: boolean
@@ -75,4 +86,14 @@ export const entryApi = {
 
   batchArchive: (kb_id: string, ids: string[]): Promise<{ status: string; archived: number }> =>
     api.post(`/knowledge/${kb_id}/entries/batch/archive`, { ids }),
+
+  // Spec 25 Plan B — 自动标签三动作
+  acceptAutoTag: (kb_id: string, entry_id: string, tag: string): Promise<KnowledgeEntry> =>
+    api.post(`/knowledge/${kb_id}/entries/${entry_id}/auto-tags/accept`, { tag }),
+
+  rejectAutoTag: (kb_id: string, entry_id: string, tag: string): Promise<KnowledgeEntry> =>
+    api.post(`/knowledge/${kb_id}/entries/${entry_id}/auto-tags/reject`, { tag }),
+
+  regenerateAutoTags: (kb_id: string, entry_id: string): Promise<{ task_id: string; status: string }> =>
+    api.post(`/knowledge/${kb_id}/entries/${entry_id}/auto-tags/regenerate`),
 }

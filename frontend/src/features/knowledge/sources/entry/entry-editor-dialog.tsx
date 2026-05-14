@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import MDEditor from "@uiw/react-md-editor"
 import { toast } from "sonner"
-import { ChevronDown, ChevronRight, X } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -151,6 +151,8 @@ export function EntryEditorDialog({
   const [tagInput, setTagInput] = useState("")
   const [folderId, setFolderId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // Spec 25 Plan B — 自动标签操作中
+  const [autoTagBusy, setAutoTagBusy] = useState(false)
 
   const flatFolders = useMemo(() => flattenFolders(folders), [folders])
   const folderPath = useMemo(() => buildFolderPath(folders, folderId), [folders, folderId])
@@ -178,6 +180,51 @@ export function EntryEditorDialog({
 
   function removeTag(t: string) {
     setTags(tags.filter((x) => x !== t))
+  }
+
+  // ── Spec 25 Plan B — auto_tags 接受 / 拒绝 / 重新生成 ────────
+  async function handleAcceptAutoTag(tag: string) {
+    if (!entry) return
+    setAutoTagBusy(true)
+    try {
+      const updated = await entryApi.acceptAutoTag(kbId, entry.id, tag)
+      // 本地状态同步：把 canonical 加进 user tags 输入区
+      setTags(updated.tags ?? [])
+      toast.success(`已接受：${tag}`)
+      onSaved()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "接受失败")
+    } finally {
+      setAutoTagBusy(false)
+    }
+  }
+
+  async function handleRejectAutoTag(tag: string) {
+    if (!entry) return
+    setAutoTagBusy(true)
+    try {
+      await entryApi.rejectAutoTag(kbId, entry.id, tag)
+      toast.success(`已拒绝：${tag}`)
+      onSaved()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "拒绝失败")
+    } finally {
+      setAutoTagBusy(false)
+    }
+  }
+
+  async function handleRegenerateAutoTags() {
+    if (!entry) return
+    setAutoTagBusy(true)
+    try {
+      await entryApi.regenerateAutoTags(kbId, entry.id)
+      toast.success("已排队重新生成；处理完成后刷新查看")
+      // 不主动轮询 task；用户重新打开 / 刷新即可看到新结果
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "重新生成失败")
+    } finally {
+      setAutoTagBusy(false)
+    }
   }
 
   async function handleSave() {
@@ -376,6 +423,55 @@ export function EntryEditorDialog({
                 placeholder="输入后按 Enter / 逗号添加"
               />
             </CollapsibleSection>
+
+            {/* 自动标签 — 可折叠（Spec 25 Plan B；仅编辑模式 + auto_tags 非空时显示） */}
+            {entry && entry.auto_tags && entry.auto_tags.length > 0 && (
+              <CollapsibleSection title="自动标签建议">
+                <div className="flex flex-wrap gap-1.5">
+                  {entry.auto_tags.map((at) => (
+                    <Badge
+                      key={at.tag}
+                      variant="outline"
+                      className="gap-0.5 pr-0.5 text-xs"
+                      title={`${at.source} · 置信度 ${at.confidence.toFixed(2)}`}
+                    >
+                      <span>{at.tag}</span>
+                      <span className="text-[9px] text-muted-foreground">
+                        {(at.confidence * 100).toFixed(0)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleAcceptAutoTag(at.tag)}
+                        className="ml-0.5 rounded-sm p-0.5 text-success transition-colors hover:bg-success/10"
+                        aria-label={`接受 ${at.tag}`}
+                        title="接受为用户标签"
+                      >
+                        <Check className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRejectAutoTag(at.tag)}
+                        className="-mr-0.5 rounded-sm p-0.5 text-destructive transition-colors hover:bg-destructive/10"
+                        aria-label={`拒绝 ${at.tag}`}
+                        title="拒绝（加入黑名单）"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <div className="mt-2 flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleRegenerateAutoTags}
+                    disabled={autoTagBusy}
+                  >
+                    {autoTagBusy ? "排队中…" : "重新生成"}
+                  </Button>
+                </div>
+              </CollapsibleSection>
+            )}
 
             {/* 文件夹 — 可折叠 */}
             <CollapsibleSection title="文件夹">
