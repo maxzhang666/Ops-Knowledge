@@ -7,15 +7,15 @@ avoiding wasted rechunk + reembed cycles.
 Existing rows are backfilled via SQL sha256(content::bytea) so the
 column is immediately useful; future rows fill it at create/update time.
 
-Revision ID: 0060_entry_content_hash
-Revises: 0059_tag_governance
+Revision ID: 0060
+Revises: 0059
 """
 from __future__ import annotations
 
 from alembic import op
 
-revision = "0060_entry_content_hash"
-down_revision = "0059_tag_governance"
+revision = "0060"
+down_revision = "0059"
 branch_labels = None
 depends_on = None
 
