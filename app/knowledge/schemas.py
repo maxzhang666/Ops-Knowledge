@@ -102,6 +102,9 @@ class EntryResponse(BaseModel):
     reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # 用户视角"最近一次手动编辑时间"。区别于 updated_at（被 embedding/review/
+    # lifecycle 等系统 UPDATE 污染）。前端事件流"编辑了内容"用此字段。
+    last_user_edited_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

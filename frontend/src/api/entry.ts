@@ -39,6 +39,9 @@ export interface KnowledgeEntry {
   reviewed_at: string | null
   created_at: string
   updated_at: string
+  /** 用户视角"最近一次手动编辑时间"。前端事件流"编辑了内容"用此字段，
+   * 避免被 embedding/review/lifecycle 等系统 UPDATE 污染。 */
+  last_user_edited_at: string | null
 }
 
 export interface EntryCreatePayload {

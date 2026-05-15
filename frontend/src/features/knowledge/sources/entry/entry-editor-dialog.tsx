@@ -269,12 +269,16 @@ export function EntryEditorDialog({
       window.matchMedia("(prefers-color-scheme: dark)").matches)
 
   // 操作记录事件流（基于现有字段合成）
+  // 注意：updated_at 是 DB onupdate=now() 触发的，会被 embedding / review /
+  // lifecycle 等系统 UPDATE 污染（昨天编辑、今天 worker 处理后会显示"几秒前"）。
+  // 用户操作时间走 last_user_edited_at（仅 plugin 在用户可见字段变化时显式 set）。
   const events = useMemo(() => {
     if (!entry) return []
     const list: { time: string; actor: string | null; action: string }[] = []
     list.push({ time: entry.created_at, actor: entry.created_by_name, action: "创建条目" })
-    if (entry.updated_at && entry.updated_at !== entry.created_at) {
-      list.push({ time: entry.updated_at, actor: entry.created_by_name, action: "编辑了内容" })
+    const editedAt = entry.last_user_edited_at
+    if (editedAt && editedAt !== entry.created_at) {
+      list.push({ time: editedAt, actor: entry.created_by_name, action: "编辑了内容" })
     }
     if (entry.reviewed_at) {
       const action =

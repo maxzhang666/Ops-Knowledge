@@ -132,6 +132,7 @@ class EntrySourcePlugin(IngestionPlugin):
             allow_create=True, actor_id=payload.get("author_id"),
         )
 
+        now_utc = datetime.now(timezone.utc)
         entry = KnowledgeEntry(
             knowledge_base_id=kb_id,
             folder_id=payload.get("folder_id"),
@@ -141,6 +142,8 @@ class EntrySourcePlugin(IngestionPlugin):
             tags=normalized_tags or None,
             token_count=_estimate_tokens(payload["content"]),
             created_by=payload["author_id"],
+            # 创建即视为"用户最近一次编辑"
+            last_user_edited_at=now_utc,
         )
         if kb.review_required:
             entry.review_status = "pending"
@@ -189,10 +192,21 @@ class EntrySourcePlugin(IngestionPlugin):
             normalized_new_tags is not None
             and normalized_new_tags != (entry.tags or [])
         )
+        folder_changed = (
+            "folder_id" in payload and payload["folder_id"] != entry.folder_id
+        )
         # material_changed 仅当 content 真正变化（决定 rechunk + reembed 路径）；
-        # title/tags 单独追踪用于 review reset（spec 19 §14.1 "任何字段变化进 review"）
+        # title/tags 单独追踪用于 review reset（spec 19 §14.1 "任何字段变化进 review"）；
+        # folder_changed 不进 review_relevant（移动文件夹不算"内容编辑"），但仍刷
+        # last_user_edited_at（产品视角："我移动了这条目"）。
         material_changed = content_changed
         any_review_relevant_change = content_changed or title_changed or tags_changed
+        # 产品视角的"用户操作时间"：覆盖 title / content / tags / folder 任一变化。
+        # 用于前端事件流"编辑了内容"展示，与 DB updated_at（被 status / review /
+        # lifecycle 等 onupdate 污染）解耦。
+        user_edited = (
+            content_changed or title_changed or tags_changed or folder_changed
+        )
 
         # 应用字段更新
         if "title" in payload:
@@ -205,6 +219,8 @@ class EntrySourcePlugin(IngestionPlugin):
             entry.tags = normalized_new_tags or None
         if "folder_id" in payload:
             entry.folder_id = payload["folder_id"]
+        if user_edited:
+            entry.last_user_edited_at = datetime.now(timezone.utc)
 
         # review_required 的 KB：任何字段变化都重置 review state（spec 19 §14.1）
         if any_review_relevant_change:

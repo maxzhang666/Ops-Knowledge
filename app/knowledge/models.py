@@ -215,6 +215,12 @@ class KnowledgeEntry(Base, UUIDMixin, TimestampMixin):
     last_pending_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )
+    # 用户视角的"最近一次手动编辑时间"。仅 plugin.create/update_unit 在用户
+    # 可见字段（title/content/tags/folder）变化时 set；embedding/review/lifecycle
+    # 等系统 UPDATE 不动它，避免 updated_at（DB onupdate）被污染问题（见 0061 注释）。
+    last_user_edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
     # Spec 25 — 自动标签：[{tag, confidence, source, extracted_at}]
     auto_tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # Spec 25 — 用户拒绝过的自动标签黑名单（下次提取跳过）
