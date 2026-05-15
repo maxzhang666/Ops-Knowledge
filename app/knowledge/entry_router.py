@@ -585,9 +585,16 @@ async def regenerate_auto_tags(
     db: AsyncSession = Depends(get_db),
 ):
     """手动重新生成 auto_tags（admin / KB owner）。
-    异步触发 extract_auto_tags celery 任务，返回 task_id 供前端轮询。"""
+    异步触发 extract_auto_tags celery 任务，返回 task_id 供前端轮询。
+
+    预检（同步）：
+    - KBTagSettings.auto_tag_enabled = true
+    - provider in (llm, hybrid) → auto_tag_llm_model_id 必须已配
+    不满足直接 400 返清晰文案；避免 task 静默跑完返 0 个标签让用户困惑。
+    """
     from app.core.tasks import safe_delay
     from app.knowledge.tagging.extract_tasks import extract_auto_tags
+    from app.knowledge.tagging.models import KBTagSettings
 
     kb = await db.get(KnowledgeBase, kb_id)
     if kb is None:
@@ -597,11 +604,32 @@ async def regenerate_auto_tags(
     if entry is None or entry.knowledge_base_id != kb_id:
         raise HTTPException(404, "Entry not found")
 
+    # ── 预检：拦截 silent failure 场景 ────────────────────────────
+    settings_row = await db.get(KBTagSettings, kb_id)
+    if settings_row is None or not settings_row.auto_tag_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="该知识库未启用智能标签。请到「知识库配置 → 智能标签设置」打开总开关。",
+        )
+    if (
+        settings_row.auto_tag_provider in ("llm", "hybrid")
+        and settings_row.auto_tag_llm_model_id is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"当前 provider 为 {settings_row.auto_tag_provider}，"
+                "但未配置 LLM 模型。请到「知识库配置 → 智能标签设置 → 展开高级参数 → LLM 模型」"
+                "选择一个模型，或把 provider 改为 keybert（仅 embedding，无 LLM 依赖）。"
+            ),
+        )
+
     result = safe_delay(extract_auto_tags, "entry", str(entry_id))
     task_id = getattr(result, "id", None)
     logger.info(
         "entry.auto_tags.regenerate",
         kb_id=str(kb_id), unit_id=str(entry_id),
         task_id=task_id, actor=str(current_user.id),
+        provider=settings_row.auto_tag_provider,
     )
     return {"task_id": task_id, "status": "accepted"}

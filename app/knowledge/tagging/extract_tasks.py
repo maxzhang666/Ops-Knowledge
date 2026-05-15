@@ -302,18 +302,41 @@ async def _run_extract(
             candidates = await extractor.extract(
                 title=title, content=content, max_n=max_n, deps=deps,
             )
+            if not candidates:
+                logger.warning(
+                    "auto_tag_extractor_returned_zero",
+                    provider=provider, dict_size=len(canonicals),
+                    hint="check worker logs for llm_extractor_* warnings",
+                )
 
             # 阈值过滤 + rejected 黑名单
             filtered = [
                 c for c in candidates
                 if c.confidence >= threshold and c.tag not in rejected
             ]
+            if candidates and not filtered:
+                logger.warning(
+                    "auto_tag_all_filtered_by_threshold_or_rejected",
+                    candidates=len(candidates), threshold=threshold,
+                    rejected_size=len(rejected),
+                )
 
             # 字典 normalize（auto 标签 allow_create=False → 未命中 drop）
             normalized = await normalize_tags(
                 db, kb_id, [c.tag for c in filtered],
                 allow_create=False,
             )
+            if filtered and not normalized:
+                logger.warning(
+                    "auto_tag_normalize_dropped_all",
+                    candidates=[c.tag for c in filtered][:10],
+                    dict_size=len(canonicals),
+                    hint=(
+                        "auto 标签 allow_create=False；字典空或未命中时全 drop。"
+                        "前往「设置 → 知识库 → 标签字典」补充 canonical，"
+                        "或让用户在编辑器手动加 user tag（user 标签 allow_create=True）。"
+                    ),
+                )
             await db.commit()  # normalize 可能查 cache，无需提交内容；幂等
 
             # 按 normalize 后的 canonical 重新映射 confidence

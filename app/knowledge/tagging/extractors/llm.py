@@ -10,11 +10,15 @@ from __future__ import annotations
 import json
 import re
 
+import structlog
+
 from app.knowledge.tagging.extractors.base import (
     AutoTagger,
     ExtractorDeps,
     TagCandidate,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 _PROMPT_TEMPLATE = """你是一个标签提取助手。从给定的标题和正文中提取最能代表主题的标签（关键概念词）。
@@ -75,6 +79,9 @@ class LLMExtractor:
         deps: ExtractorDeps,
     ) -> list[TagCandidate]:
         if deps.kb_llm_registry_id is None:
+            # 预检在 endpoint 层已挡掉用户触发路径；这里仍 log 一行，便于排查
+            # 「embed 后 chain 触发 extract」走到这里的场景（同样应在 endpoint 拦）。
+            logger.warning("llm_extractor_skip_no_model_id")
             return []
 
         prompt = _PROMPT_TEMPLATE.format(
@@ -90,7 +97,13 @@ class LLMExtractor:
                 temperature=0.2,
                 max_tokens=512,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "llm_extractor_chat_failed",
+                registry_id=str(deps.kb_llm_registry_id),
+                error=str(exc)[:200],
+                exc_info=True,
+            )
             return []
 
         # 兼容 LiteLLM 返回结构：response['choices'][0]['message']['content']
@@ -101,9 +114,22 @@ class LLMExtractor:
                 msg = choices[0].get("message") or {}
                 raw_text = msg.get("content") or ""
         except (AttributeError, IndexError):
+            logger.warning(
+                "llm_extractor_response_unparseable",
+                response_type=type(response).__name__,
+            )
+            return []
+
+        if not raw_text:
+            logger.warning("llm_extractor_empty_response")
             return []
 
         parsed = _extract_json_array(raw_text)
+        if not parsed:
+            logger.warning(
+                "llm_extractor_no_json_array_in_response",
+                preview=raw_text[:200],
+            )
         out: list[TagCandidate] = []
         seen: set[str] = set()
         for item in parsed:

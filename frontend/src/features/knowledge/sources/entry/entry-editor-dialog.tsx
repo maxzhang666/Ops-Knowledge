@@ -221,11 +221,16 @@ export function EntryEditorDialog({
     setAutoTagBusy(true)
     try {
       await entryApi.regenerateAutoTags(kbId, entry.id)
-      toast.success("已排队重新生成；处理完成后刷新查看")
-      // 不主动轮询 task；用户重新打开 / 刷新即可看到新结果
+      toast.success("已排队重新生成，正在等待结果…")
+      // 任务通常 < 5s 完成；2s 后触发 reload 拉新 entry，让 auto_tags 区块显示最新结果。
+      // 不论 task 成功还是返空，用户都能看到状态（空时显示空态说明）。
+      setTimeout(() => {
+        onSaved()
+        setAutoTagBusy(false)
+      }, 2500)
     } catch (err) {
+      // 后端预检失败（KB 未启用 / provider=llm 但未配模型）→ 直接 toast 引导
       toast.error(err instanceof Error ? err.message : "重新生成失败")
-    } finally {
       setAutoTagBusy(false)
     }
   }
