@@ -618,9 +618,9 @@ async def regenerate_auto_tags(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"当前 provider 为 {settings_row.auto_tag_provider}，"
-                "但未配置 LLM 模型。请到「知识库配置 → 智能标签设置 → 展开高级参数 → LLM 模型」"
-                "选择一个模型，或把 provider 改为 keybert（仅 embedding，无 LLM 依赖）。"
+                f"当前 Provider 为 {settings_row.auto_tag_provider}，但未选择 LLM 模型。"
+                "请到「知识库配置 → 智能标签设置」选择一个 LLM 模型，"
+                "或把 Provider 改为 KeyBERT（仅用 embedding，无 LLM 依赖）。"
             ),
         )
 

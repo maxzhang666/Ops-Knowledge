@@ -19,7 +19,6 @@ import {
   type TagPreset,
   type UpdateKBTagSettings,
 } from "@/api/kb_tag_settings"
-import { useAuthStore } from "@/stores/auth"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 
 interface ConfigTabProps {
@@ -676,9 +675,13 @@ function ReviewToggleCard({
 
 
 // ─────────────────────────────────────────────────────────────────
-// Spec 25 §6 — 智能标签设置卡（admin only）
-// 3 档 preset radio + 高级 collapsible 展开各字段；
-// 任一字段改动自动转 custom；UI 仅 system_admin 渲染。
+// Spec 25 §6 — 智能标签设置卡
+// 3 档 preset radio + 高级 collapsible 展开各字段；任一字段改动自动转 custom。
+//
+// 2026-05-15: 移除 admin-only 限制 —— 原 spec §6.2 写 admin only 是设计缺陷，
+// 导致普通用户碰到 "auto_tag 没生成" 时无自助路径（错误 toast 引导他去他看
+// 不到的卡片）。改为所有有 KB edit 权限的用户都可见可改；后端的写权限由
+// check_resource_access(..., "edit") 保护，不依赖前端 role 判断。
 
 const TAG_PRESETS: { value: Exclude<TagPreset, "custom">; label: string; desc: string }[] = [
   { value: "low_cost", label: "低成本", desc: "KeyBERT，max 3 标签，置信度阈值 0.7" },
@@ -695,7 +698,6 @@ const TAG_PROVIDER_OPTIONS: { value: KBTagSettings["auto_tag_provider"]; label: 
 ]
 
 function TagSettingsCard({ kbId }: { kbId: string }) {
-  const role = useAuthStore((s) => s.user?.role)
   const [data, setData] = useState<KBTagSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -716,9 +718,6 @@ function TagSettingsCard({ kbId }: { kbId: string }) {
       .then((l) => setLlmOptions(Array.isArray(l) ? l : []))
       .catch(() => {})
   }, [])
-
-  // 仅 system_admin 可见，避免普通用户被复杂参数干扰
-  if (role !== "system_admin") return null
 
   async function patch(update: UpdateKBTagSettings) {
     setSaving(true)
