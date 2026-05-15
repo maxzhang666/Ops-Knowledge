@@ -156,6 +156,10 @@ export function EntryEditorDialog({
   const [submitting, setSubmitting] = useState(false)
   // Spec 25 Plan B — 自动标签操作中
   const [autoTagBusy, setAutoTagBusy] = useState(false)
+  // 局部维护 auto_tags 状态：accept / reject / regenerate 后立即反馈到 UI，
+  // 避免依赖父组件 entry props 重传（onSaved 只刷 entries 列表 state，dialog
+  // 接的 entry 引用不变）。rejected_auto_tags 是黑名单不在 UI 渲染，不维护本地副本。
+  const [liveAutoTags, setLiveAutoTags] = useState<KnowledgeEntry["auto_tags"]>(null)
 
   const flatFolders = useMemo(() => flattenFolders(folders), [folders])
   const folderPath = useMemo(() => buildFolderPath(folders, folderId), [folders, folderId])
@@ -167,6 +171,7 @@ export function EntryEditorDialog({
       setTags(entry?.tags ?? [])
       setTagInput("")
       setFolderId(entry ? entry.folder_id : (defaultFolderId ?? null))
+      setLiveAutoTags(entry?.auto_tags ?? null)
     }
   }, [open, entry, defaultFolderId])
 
@@ -191,8 +196,9 @@ export function EntryEditorDialog({
     setAutoTagBusy(true)
     try {
       const updated = await entryApi.acceptAutoTag(kbId, entry.id, tag)
-      // 本地状态同步：把 canonical 加进 user tags 输入区
+      // 同步 user tags + auto_tags（被接受的会从 auto_tags 移除进 tags）
       setTags(updated.tags ?? [])
+      setLiveAutoTags(updated.auto_tags ?? null)
       toast.success(`已接受：${tag}`)
       onSaved()
     } catch (err) {
@@ -206,7 +212,9 @@ export function EntryEditorDialog({
     if (!entry) return
     setAutoTagBusy(true)
     try {
-      await entryApi.rejectAutoTag(kbId, entry.id, tag)
+      const updated = await entryApi.rejectAutoTag(kbId, entry.id, tag)
+      // 同步：被拒绝的从 auto_tags 移除，加入 rejected_auto_tags
+      setLiveAutoTags(updated.auto_tags ?? null)
       toast.success(`已拒绝：${tag}`)
       onSaved()
     } catch (err) {
@@ -219,20 +227,47 @@ export function EntryEditorDialog({
   async function handleRegenerateAutoTags() {
     if (!entry) return
     setAutoTagBusy(true)
+    const entryId = entry.id
+    // 记录提交前 auto_tags 快照，用于 polling 判 task 是否完成
+    const baseline = JSON.stringify(liveAutoTags ?? [])
     try {
-      await entryApi.regenerateAutoTags(kbId, entry.id)
+      await entryApi.regenerateAutoTags(kbId, entryId)
       toast.success("已排队重新生成，正在等待结果…")
-      // 任务通常 < 5s 完成；2s 后触发 reload 拉新 entry，让 auto_tags 区块显示最新结果。
-      // 不论 task 成功还是返空，用户都能看到状态（空时显示空态说明）。
-      setTimeout(() => {
-        onSaved()
-        setAutoTagBusy(false)
-      }, 2500)
     } catch (err) {
       // 后端预检失败（KB 未启用 / provider=llm 但未配模型）→ 直接 toast 引导
       toast.error(err instanceof Error ? err.message : "重新生成失败")
       setAutoTagBusy(false)
+      return
     }
+
+    // Polling — LLM extract task 通常 2-8s 完成；轮询每 1.5s 拉单 entry，
+    // 发现 auto_tags 变化即停止；最多 8 次（共 12s）兜底退出。
+    let attempts = 0
+    const MAX_ATTEMPTS = 8
+    const POLL_INTERVAL_MS = 1500
+    const poll = async () => {
+      attempts += 1
+      try {
+        const fresh = await entryApi.get(kbId, entryId)
+        const freshAuto = JSON.stringify(fresh.auto_tags ?? [])
+        if (freshAuto !== baseline) {
+          setLiveAutoTags(fresh.auto_tags ?? null)
+          setAutoTagBusy(false)
+          onSaved()  // 同步刷新父组件 entries 列表
+          return
+        }
+      } catch {
+        // 单次拉取失败不阻断 polling；下一轮继续
+      }
+      if (attempts < MAX_ATTEMPTS) {
+        setTimeout(poll, POLL_INTERVAL_MS)
+      } else {
+        // 12s 仍无变化 → 超时退出。可能是 LLM 调用慢，也可能真返空
+        setAutoTagBusy(false)
+        toast.info("等待超时；刷新页面查看，或检查 worker 日志确认任务状态")
+      }
+    }
+    setTimeout(poll, POLL_INTERVAL_MS)
   }
 
   async function handleSave() {
@@ -449,13 +484,14 @@ export function EntryEditorDialog({
             </CollapsibleSection>
 
             {/* 自动标签建议 — 仅编辑模式显示；spec §6.1：空时也显示区块 + 生成按钮，
-                避免 sealed silence。空态文案解释常见原因，引导用户去 KB 配置或字典页 */}
+                避免 sealed silence。空态文案解释常见原因，引导用户去 KB 配置或字典页。
+                渲染用 liveAutoTags（本地 state），accept/reject/regenerate 立即反馈 */}
             {entry && (
               <CollapsibleSection title="自动标签建议">
-                {(entry.auto_tags?.length ?? 0) > 0 ? (
+                {(liveAutoTags?.length ?? 0) > 0 ? (
                   <>
                     <div className="flex flex-wrap gap-1.5">
-                      {entry.auto_tags!.map((at) => (
+                      {liveAutoTags!.map((at) => (
                         <Badge
                           key={at.tag}
                           variant="secondary"
