@@ -503,9 +503,9 @@ export function EntryEditorDialog({
                   <div className="flex flex-col gap-2 rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
                     <p>暂未提取到自动标签。常见原因：</p>
                     <ul className="list-disc pl-4">
-                      <li>条目刚创建 / 重新嵌入未完成</li>
-                      <li>KB 关闭了「智能标签」（KB 配置 → 智能标签设置）</li>
-                      <li>字典为空，候选项被 normalize 全部过滤</li>
+                      <li>条目刚创建 / 重新嵌入还未完成</li>
+                      <li>KB 关闭了「智能标签」（去 KB 配置 → 智能标签设置 检查）</li>
+                      <li>Provider 选 LLM / Hybrid 但未配置 LLM 模型</li>
                       <li>置信度阈值过高（默认 0.6，可在 KB 配置调低）</li>
                     </ul>
                     <div className="mt-1 flex justify-end">

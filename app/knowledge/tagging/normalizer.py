@@ -102,10 +102,11 @@ async def normalize_tags(
 ) -> list[str]:
     """批量规范化标签列表 —— 用户/自动两轨共用。
 
-    allow_create=True (user 标签):
-      未命中字典则创建新 canonical（用 raw.strip() 原大小写做 canonical 名）。
-    allow_create=False (auto 标签):
-      未命中则 drop。
+    allow_create=True：未命中字典则创建新 canonical（用 raw.strip() 原大小写）。
+      - user 标签：默认走此路径，actor_id=用户 uuid
+      - auto 标签：2026-05-15 起也走此路径，actor_id=None
+        （created_by IS NULL 作为"自动创建"识别信号，admin 在字典页可据此筛查）
+    allow_create=False：未命中则 drop（保留作为防御性参数；当前业务路径不再使用）。
 
     返回去重后的 canonical 列表（按输入顺序）。
     """

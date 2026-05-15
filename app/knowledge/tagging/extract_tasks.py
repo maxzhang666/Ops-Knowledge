@@ -321,22 +321,14 @@ async def _run_extract(
                     rejected_size=len(rejected),
                 )
 
-            # 字典 normalize（auto 标签 allow_create=False → 未命中 drop）
+            # 字典 normalize —— 2026-05-15 改：auto 标签也走 allow_create=True，
+            # 字典治理改为"事后合并/弃用"模式（spec 25 §3 同步修订）。
+            # actor_id=None 让 created_by 为 NULL，admin 在字典页可据此识别"自动创建"。
             normalized = await normalize_tags(
                 db, kb_id, [c.tag for c in filtered],
-                allow_create=False,
+                allow_create=True,
+                actor_id=None,  # 自动创建无 actor
             )
-            if filtered and not normalized:
-                logger.warning(
-                    "auto_tag_normalize_dropped_all",
-                    candidates=[c.tag for c in filtered][:10],
-                    dict_size=len(canonicals),
-                    hint=(
-                        "auto 标签 allow_create=False；字典空或未命中时全 drop。"
-                        "前往「设置 → 知识库 → 标签字典」补充 canonical，"
-                        "或让用户在编辑器手动加 user tag（user 标签 allow_create=True）。"
-                    ),
-                )
             await db.commit()  # normalize 可能查 cache，无需提交内容；幂等
 
             # 按 normalize 后的 canonical 重新映射 confidence
