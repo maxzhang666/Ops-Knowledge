@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import MDEditor from "@uiw/react-md-editor"
 import { toast } from "sonner"
-import { Check, ChevronDown, ChevronRight, X } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Sparkles, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -443,52 +443,78 @@ export function EntryEditorDialog({
               />
             </CollapsibleSection>
 
-            {/* 自动标签 — 可折叠（Spec 25 Plan B；仅编辑模式 + auto_tags 非空时显示） */}
-            {entry && entry.auto_tags && entry.auto_tags.length > 0 && (
+            {/* 自动标签建议 — 仅编辑模式显示；spec §6.1：空时也显示区块 + 生成按钮，
+                避免 sealed silence。空态文案解释常见原因，引导用户去 KB 配置或字典页 */}
+            {entry && (
               <CollapsibleSection title="自动标签建议">
-                <div className="flex flex-wrap gap-1.5">
-                  {entry.auto_tags.map((at) => (
-                    <Badge
-                      key={at.tag}
-                      variant="outline"
-                      className="gap-0.5 pr-0.5 text-xs"
-                      title={`${at.source} · 置信度 ${at.confidence.toFixed(2)}`}
-                    >
-                      <span>{at.tag}</span>
-                      <span className="text-[9px] text-muted-foreground">
-                        {(at.confidence * 100).toFixed(0)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleAcceptAutoTag(at.tag)}
-                        className="ml-0.5 rounded-sm p-0.5 text-success transition-colors hover:bg-success/10"
-                        aria-label={`接受 ${at.tag}`}
-                        title="接受为用户标签"
+                {(entry.auto_tags?.length ?? 0) > 0 ? (
+                  <>
+                    <div className="flex flex-wrap gap-1.5">
+                      {entry.auto_tags!.map((at) => (
+                        <Badge
+                          key={at.tag}
+                          variant="secondary"
+                          className="gap-0.5 pr-0.5 text-xs"
+                          title={`${at.source} · 置信度 ${at.confidence.toFixed(2)}`}
+                        >
+                          <Sparkles className="size-2.5 opacity-60" />
+                          <span>{at.tag}</span>
+                          <span className="text-[9px] text-muted-foreground">
+                            {(at.confidence * 100).toFixed(0)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptAutoTag(at.tag)}
+                            className="ml-0.5 rounded-sm p-0.5 text-success transition-colors hover:bg-success/10"
+                            aria-label={`接受 ${at.tag}`}
+                            title="接受为用户标签"
+                          >
+                            <Check className="size-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectAutoTag(at.tag)}
+                            className="-mr-0.5 rounded-sm p-0.5 text-destructive transition-colors hover:bg-destructive/10"
+                            aria-label={`拒绝 ${at.tag}`}
+                            title="拒绝（加入黑名单）"
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleRegenerateAutoTags}
+                        disabled={autoTagBusy}
                       >
-                        <Check className="size-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRejectAutoTag(at.tag)}
-                        className="-mr-0.5 rounded-sm p-0.5 text-destructive transition-colors hover:bg-destructive/10"
-                        aria-label={`拒绝 ${at.tag}`}
-                        title="拒绝（加入黑名单）"
+                        {autoTagBusy ? "排队中…" : "重新生成"}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col gap-2 rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+                    <p>暂未提取到自动标签。常见原因：</p>
+                    <ul className="list-disc pl-4">
+                      <li>条目刚创建 / 重新嵌入未完成</li>
+                      <li>KB 关闭了「智能标签」（KB 配置 → 智能标签设置）</li>
+                      <li>字典为空，候选项被 normalize 全部过滤</li>
+                      <li>置信度阈值过高（默认 0.6，可在 KB 配置调低）</li>
+                    </ul>
+                    <div className="mt-1 flex justify-end">
+                      <Button
+                        size="sm"
+                        onClick={handleRegenerateAutoTags}
+                        disabled={autoTagBusy}
                       >
-                        <X className="size-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                </div>
-                <div className="mt-2 flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleRegenerateAutoTags}
-                    disabled={autoTagBusy}
-                  >
-                    {autoTagBusy ? "排队中…" : "重新生成"}
-                  </Button>
-                </div>
+                        <Sparkles className="mr-1 size-3" />
+                        {autoTagBusy ? "排队中…" : "立即生成"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CollapsibleSection>
             )}
 

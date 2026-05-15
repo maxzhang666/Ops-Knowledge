@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Edit, Plus, Search, Trash2, Upload } from "lucide-react"
+import { Edit, Plus, Search, Sparkles, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -299,8 +299,9 @@ export function EntriesTab({ kb }: { kb: KnowledgeBase }) {
                   <td className="px-3 py-2 font-medium">{e.title}</td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap gap-1">
+                      {/* 用户标签 — outline 实线边 + 黑字 */}
                       {(e.tags ?? []).slice(0, 3).map((t, i) => (
-                        <Badge key={i} variant="outline" className="text-[10px]">
+                        <Badge key={`u-${i}`} variant="outline" className="text-[10px]">
                           {t}
                         </Badge>
                       ))}
@@ -309,6 +310,36 @@ export function EntriesTab({ kb }: { kb: KnowledgeBase }) {
                           +{(e.tags?.length ?? 0) - 3}
                         </span>
                       )}
+                      {/* 自动标签 — secondary 浅底灰字 + ✨ 前缀，spec §6.1.1 视觉区分。
+                          已被用户接受的 auto_tag 会进 user tags，这里过滤避免重复展示 */}
+                      {(() => {
+                        const userSet = new Set((e.tags ?? []))
+                        const pending = (e.auto_tags ?? []).filter(
+                          (at) => at?.tag && !userSet.has(at.tag),
+                        )
+                        const shown = pending.slice(0, 3)
+                        const extra = pending.length - shown.length
+                        return (
+                          <>
+                            {shown.map((at, i) => (
+                              <Badge
+                                key={`a-${i}`}
+                                variant="secondary"
+                                className="gap-0.5 text-[10px]"
+                                title={`AI 建议 · 置信度 ${at.confidence.toFixed(2)}`}
+                              >
+                                <Sparkles className="size-2 opacity-60" />
+                                {at.tag}
+                              </Badge>
+                            ))}
+                            {extra > 0 && (
+                              <span className="text-[10px] text-muted-foreground">
+                                +{extra} AI
+                              </span>
+                            )}
+                          </>
+                        )
+                      })()}
                     </div>
                   </td>
                   <td className="px-3 py-2">
