@@ -5,6 +5,7 @@ import {
   RefreshCw, Trash2, X,
 } from "lucide-react"
 
+import { Select as SemiSelect } from "@douyinfe/semi-ui"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -15,9 +16,6 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
 import { TimeDisplay } from "@/components/shared/time-display"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { knowledgeApi, type KnowledgeBase } from "@/api/knowledge"
@@ -120,36 +118,18 @@ export default function TagDictionaryPage() {
       </header>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={kbId} onValueChange={(v) => { setKbId(v ?? ""); setPage(1) }}>
-          <SelectTrigger className="w-64">
-            {/* label-aware：避免 trigger 显示 KB UUID */}
-            {kbId
-              ? (() => {
-                  const kb = kbs.find((k) => k.id === kbId)
-                  return (
-                    <span className="truncate">
-                      {kb?.name ?? kbId}
-                      {kb && (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          ({kb.source_type})
-                        </span>
-                      )}
-                    </span>
-                  )
-                })()
-              : <SelectValue placeholder="选择知识库" />}
-          </SelectTrigger>
-          <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
-            {kbs.map((kb) => (
-              <SelectItem key={kb.id} value={kb.id}>
-                {kb.name}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  ({kb.source_type})
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Semi Select：自带 portal + z-index 1050，朝上展开不会被 sidebar / header 遮挡。
+            optionList 由 KB 列表合成，label 含 source_type 后缀供识别 */}
+        <SemiSelect
+          value={kbId || undefined}
+          onChange={(v) => { setKbId(typeof v === "string" ? v : ""); setPage(1) }}
+          placeholder="选择知识库"
+          className="w-64"
+          optionList={kbs.map((kb) => ({
+            value: kb.id,
+            label: `${kb.name}  (${kb.source_type})`,
+          }))}
+        />
         <Input
           className="w-56"
           placeholder="搜索 canonical / alias..."
