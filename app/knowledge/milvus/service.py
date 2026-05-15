@@ -37,6 +37,58 @@ class MilvusService:
         if token:
             kwargs["token"] = token
         self._client = MilvusClient(**kwargs)
+        # 兼容 Spec 25 之前建的老 collection（schema 不含 chunk_tags 字段）：
+        # upsert/insert/update_chunk_tags 调用前查实际 schema 字段名，
+        # 多余字段自动剥落。per-instance cache 避免重复 describe_collection。
+        self._schema_cache: dict[str, set[str]] = {}
+
+    def _get_schema_fields(self, collection_name: str) -> set[str]:
+        """Return the set of field names defined on the collection's schema.
+
+        Cached per-instance. Failures fall back to a sentinel that bypasses
+        filtering (i.e. trust the caller's dict) — if describe_collection
+        itself is broken the upsert will surface the real error anyway.
+        """
+        cached = self._schema_cache.get(collection_name)
+        if cached is not None:
+            return cached
+        try:
+            desc = self._client.describe_collection(collection_name)
+            fields = {f["name"] for f in desc.get("fields") or []}
+            self._schema_cache[collection_name] = fields
+            return fields
+        except Exception:
+            logger.warning(
+                "milvus_describe_failed_skip_field_filter",
+                collection=collection_name, exc_info=True,
+            )
+            # 不缓存失败结果；下次重试。返回 sentinel 表示"接受所有字段"。
+            return set()
+
+    def _strip_unknown_fields(
+        self, collection_name: str, rows: list[dict],
+    ) -> list[dict]:
+        """剥落 schema 不存在的字段（例：旧 collection 没有 chunk_tags）。
+        空 schema set 视为"不过滤"以避免 describe 失败时误删字段。"""
+        fields = self._get_schema_fields(collection_name)
+        if not fields:
+            return rows
+        dropped: set[str] = set()
+        cleaned = []
+        for r in rows:
+            extras = r.keys() - fields
+            if extras:
+                dropped |= extras
+                cleaned.append({k: v for k, v in r.items() if k in fields})
+            else:
+                cleaned.append(r)
+        if dropped:
+            logger.warning(
+                "milvus_dropped_unknown_fields",
+                collection=collection_name, dropped=sorted(dropped),
+                hint="collection 是 Spec 25 之前建的；reindex_kb 重建后才能用 L2/L4 tag 过滤",
+            )
+        return cleaned
 
     # ── Collection lifecycle ─────────────────────────────────────
 
@@ -108,11 +160,13 @@ class MilvusService:
     # ── Data operations ──────────────────────────────────────────
 
     def insert(self, collection_name: str, data: list[dict]) -> dict:
+        data = self._strip_unknown_fields(collection_name, data)
         result = self._client.insert(collection_name=collection_name, data=data)
         logger.info("milvus_insert", collection=collection_name, count=len(data))
         return result
 
     def upsert(self, collection_name: str, data: list[dict]) -> dict:
+        data = self._strip_unknown_fields(collection_name, data)
         result = self._client.upsert(collection_name=collection_name, data=data)
         logger.info("milvus_upsert", collection=collection_name, count=len(data))
         return result
@@ -173,6 +227,16 @@ class MilvusService:
             实际更新的行数（query 命中数；缺失的 chunk_id 静默跳过）
         """
         if not id_to_tags:
+            return 0
+        # 老 collection (Spec 25 前建的) schema 不含 chunk_tags → 无法 partial sync。
+        # 提前 short-circuit + warning，避免后续 query 抛"unknown output field"。
+        fields = self._get_schema_fields(collection_name)
+        if fields and "chunk_tags" not in fields:
+            logger.warning(
+                "milvus_chunk_tags_field_missing_skip_sync",
+                collection=collection_name, requested=len(id_to_tags),
+                hint="跑一次 reindex_kb 重建 collection 后 L2/L4 标签过滤才生效",
+            )
             return 0
         ids = list(id_to_tags.keys())
         # Milvus filter IN expression

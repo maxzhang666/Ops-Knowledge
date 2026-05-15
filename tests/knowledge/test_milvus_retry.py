@@ -80,3 +80,82 @@ def test_delete_by_ids_retries_same_pattern():
 
     assert result == {"delete_count": 2}
     assert client.delete.call_count == 2
+
+
+# ── schema-aware row filtering（老 collection 兼容性）────────────────
+
+
+def test_upsert_strips_unknown_fields_for_legacy_collection():
+    """Spec 25 之前建的老 collection schema 没有 chunk_tags → upsert 自动剥落。"""
+    client = MagicMock()
+    # 老 collection schema：没有 chunk_tags
+    client.describe_collection.return_value = {
+        "fields": [{"name": n} for n in [
+            "id", "dense_vector", "content", "document_id",
+            "folder_id", "level", "position", "title", "metadata_json",
+        ]],
+    }
+    client.upsert.return_value = {"upsert_count": 1}
+    svc = _make_svc(client)
+    svc._schema_cache = {}
+
+    svc.upsert("legacy_coll", [{
+        "id": "c1", "content": "x", "chunk_tags": ["t1", "t2"],
+    }])
+
+    # client.upsert 收到的 data 已剥落 chunk_tags
+    sent = client.upsert.call_args.kwargs["data"]
+    assert "chunk_tags" not in sent[0]
+    assert sent[0]["id"] == "c1"
+
+
+def test_upsert_keeps_chunk_tags_for_new_collection():
+    """新 collection schema 含 chunk_tags → 字段保留。"""
+    client = MagicMock()
+    client.describe_collection.return_value = {
+        "fields": [{"name": n} for n in [
+            "id", "dense_vector", "content", "document_id",
+            "folder_id", "level", "position", "title",
+            "metadata_json", "chunk_tags",
+        ]],
+    }
+    client.upsert.return_value = {"upsert_count": 1}
+    svc = _make_svc(client)
+    svc._schema_cache = {}
+
+    svc.upsert("new_coll", [{"id": "c1", "chunk_tags": ["t1"]}])
+
+    sent = client.upsert.call_args.kwargs["data"]
+    assert sent[0]["chunk_tags"] == ["t1"]
+
+
+def test_update_chunk_tags_short_circuits_on_legacy_collection():
+    """update_chunk_tags 在老 collection 上 no-op 不抛，返回 0。"""
+    client = MagicMock()
+    client.describe_collection.return_value = {
+        "fields": [{"name": "id"}, {"name": "dense_vector"}],
+    }
+    svc = _make_svc(client)
+    svc._schema_cache = {}
+
+    n = svc.update_chunk_tags("legacy", {"c1": ["t1"]})
+    assert n == 0
+    # 不应该走到 query
+    client.query.assert_not_called()
+
+
+def test_schema_cache_reused_across_calls():
+    """describe_collection 只调一次；后续 upsert 复用 cache。"""
+    client = MagicMock()
+    client.describe_collection.return_value = {
+        "fields": [{"name": "id"}],
+    }
+    client.upsert.return_value = {"upsert_count": 1}
+    svc = _make_svc(client)
+    svc._schema_cache = {}
+
+    svc.upsert("c", [{"id": "1"}])
+    svc.upsert("c", [{"id": "2"}])
+    svc.insert("c", [{"id": "3"}])
+
+    assert client.describe_collection.call_count == 1
